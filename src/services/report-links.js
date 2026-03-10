@@ -443,6 +443,10 @@ async function sanitizeResultArtifacts(result, { storageDir } = {}) {
     }
   }
 
+  if (!artifacts.viewerPdf && isLocalStoragePdfUrl(studioUrl)) {
+    artifacts.viewerPdf = studioUrl;
+  }
+
   if (!dashboardSimilarity) {
     if (!requiresCurrentViewSimilarity) {
       dashboardSimilarity = result.similarity || null;

@@ -311,6 +311,12 @@ function isLocalCurrentViewPdf(url) {
   return /^\/storage\/reports\/.+\.pdf(?:$|\?)/i.test(String(url || ""));
 }
 
+function resolveCurrentViewPdfUrl(result = {}) {
+  const artifacts = result.artifacts || {};
+  const candidates = [artifacts.viewerPdf, result.studioUrl, result.reportUrl];
+  return candidates.find((candidate) => isLocalCurrentViewPdf(candidate)) || "";
+}
+
 function renderCurrentViewLink(url, className = "") {
   if (!url || !isLocalCurrentViewPdf(url)) {
     return "";
@@ -938,7 +944,7 @@ function normalizeRecentJobEntries(jobs = [], submissions = []) {
       status: job.status || result.similarityStatus || "-",
       timestamp: job.updatedAt || job.createdAt || result.finishedAt || "-",
       similarity: result.similarity || result.dashboardSimilarity || null,
-      currentViewUrl: artifacts.viewerPdf || "",
+      currentViewUrl: resolveCurrentViewPdfUrl(result),
       receiptUrl: artifacts.digitalReceipt || "",
       originalFileUrl: artifacts.originalFile || "",
     });
@@ -960,7 +966,7 @@ function normalizeRecentJobEntries(jobs = [], submissions = []) {
       timestamp: submission.finishedAt || "-",
       similarity:
         submission.currentViewSimilarity || submission.dashboardSimilarity || submission.similarity || null,
-      currentViewUrl: artifacts.viewerPdf || "",
+      currentViewUrl: resolveCurrentViewPdfUrl(submission),
       receiptUrl: artifacts.digitalReceipt || "",
       originalFileUrl: artifacts.originalFile || "",
     });
@@ -1034,7 +1040,7 @@ function renderJob(job) {
 
   if (job.result) {
     const artifacts = job.result.artifacts || {};
-    const currentViewUrl = artifacts.viewerPdf || "";
+    const currentViewUrl = resolveCurrentViewPdfUrl(job.result);
     const reportOptions = job.result.reportOptions || job.reportOptions || {};
     jobResult.className = "result";
     jobResult.classList.remove("hidden");

@@ -418,3 +418,15 @@ test("sanitizeResultArtifacts keeps provided current view similarity for filtere
 
   await fs.rm(storageDir, { recursive: true, force: true });
 });
+
+test("sanitizeResultArtifacts restores local current view PDF from studioUrl when artifact field is missing", async () => {
+  const sanitized = await sanitizeResultArtifacts(
+    {
+      studioUrl: "/storage/reports/job/similarity-report.pdf",
+      artifacts: {},
+    }
+  );
+
+  assert.equal(sanitized.artifacts.viewerPdf, "/storage/reports/job/similarity-report.pdf");
+  assert.equal(sanitized.studioUrl, "/storage/reports/job/similarity-report.pdf");
+});
