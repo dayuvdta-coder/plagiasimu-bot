@@ -20,6 +20,7 @@ async function createConfig() {
   return {
     dir,
     config: {
+      accountsFile: path.join(dir, "akun-turnitin.txt"),
       maxFileBytes: 50 * 1024 * 1024,
       storage: {
         dir,
@@ -451,6 +452,88 @@ test("TelegramBotService allows admin commands only for configured admin chats",
   assert.match(poolPayload?.text || "", /Plagiasimu Bot • Pool Akun/);
   assert.match(poolPayload?.text || "", /one\*\*@example\.com/);
   assert.match(poolPayload?.text || "", /two\*\*@example\.com/);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService lets admin list, add, and delete pool accounts via Telegram commands", async () => {
+  const { dir, config } = await createConfig();
+  config.telegram.allowedChatIds = ["2002"];
+  config.telegram.adminChatIds = ["2002"];
+  await fs.writeFile(config.accountsFile, "user1@example.com | pass1\n", "utf8");
+
+  const requests = [];
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      runningCount: 0,
+      queuedCount: 0,
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      on() {},
+      off() {},
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 500 + requests.length,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  const buildMessage = (text) => ({
+    message: {
+      chat: {
+        id: 2002,
+        type: "private",
+      },
+      from: {
+        id: 2002,
+        first_name: "Admin",
+      },
+      text,
+    },
+  });
+
+  await service.handleUpdate(buildMessage("/accounts list"));
+  await service.handleUpdate(buildMessage("/accounts add user2@example.com | pass2"));
+  await service.handleUpdate(buildMessage("/accountlist"));
+  await service.handleUpdate(buildMessage("/accounts del user2@example.com"));
+
+  const firstPayload = requests[0]?.payload;
+  const secondPayload = requests[1]?.payload;
+  const thirdPayload = requests[2]?.payload;
+  const fourthPayload = requests[3]?.payload;
+  const accounts = await fs.readFile(config.accountsFile, "utf8");
+
+  assert.match(firstPayload?.text || "", /Total 1 akun terdaftar\./);
+  assert.match(firstPayload?.text || "", /1\. user1@example\.com/);
+  assert.match(secondPayload?.text || "", /Akun baru berhasil ditambahkan\./);
+  assert.match(secondPayload?.text || "", /Email: user2@example\.com/);
+  assert.match(thirdPayload?.text || "", /Total 2 akun terdaftar\./);
+  assert.match(thirdPayload?.text || "", /2\. user2@example\.com/);
+  assert.match(fourthPayload?.text || "", /Akun berhasil dihapus dari file pool\./);
+  assert.match(fourthPayload?.text || "", /Sisa akun: 1/);
+  assert.equal(accounts, "user1@example.com | pass1\n");
 
   await fs.rm(dir, { recursive: true, force: true });
 });

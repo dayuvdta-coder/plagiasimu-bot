@@ -4,7 +4,7 @@ const path = require("path");
 const { randomUUID } = require("crypto");
 const QRCode = require("qrcode");
 const { URL } = require("url");
-const { maskEmail } = require("./accounts");
+const { appendAccount, listAccounts, maskEmail, removeAccount } = require("./accounts");
 const { sanitizeResultArtifacts } = require("./report-links");
 
 function sleep(ms) {
@@ -46,7 +46,17 @@ function buildResultDocumentCaption(originalName, similarity = null) {
 }
 
 const TELEGRAM_BOT_LABEL = "Plagiasimu Bot";
-const ADMIN_COMMANDS = new Set(["/admin", "/health", "/pool", "/accounts"]);
+const ADMIN_COMMANDS = new Set([
+  "/admin",
+  "/health",
+  "/pool",
+  "/accounts",
+  "/accountlist",
+  "/accountadd",
+  "/accountdel",
+  "/accountdelete",
+  "/accountremove",
+]);
 const PAYMENT_TERMINAL_STATUSES = new Set(["completed", "cancelled", "expired", "failed"]);
 
 function resolveStorageUrlPath(storageDir, value) {
@@ -505,7 +515,7 @@ class TelegramBotService {
           return;
         }
 
-        await this.handleAdminCommand(chatId, command);
+        await this.handleAdminCommand(chatId, text);
         return;
       }
 
@@ -831,6 +841,9 @@ class TelegramBotService {
             "/admin - ringkasan runtime bot",
             "/health - status queue dan pool",
             "/pool - ringkasan akun Turnitin",
+            "/accounts list - daftar akun di file pool",
+            "/accounts add email@example.com | password",
+            "/accounts del email@example.com",
           ]
         : []),
     ].join("\n");
@@ -852,6 +865,204 @@ class TelegramBotService {
       chatId,
       "Perintah admin hanya bisa dipakai oleh chat admin yang terdaftar."
     );
+  }
+
+  parseAdminCommandInput(text) {
+    const raw = String(text || "").trim();
+    const [commandToken = ""] = raw.split(/\s+/, 1);
+    const command = commandToken.toLowerCase();
+    const rest = raw.slice(commandToken.length).trim();
+    return {
+      raw,
+      command,
+      rest,
+    };
+  }
+
+  buildAdminAccountsHelpText() {
+    return [
+      `${TELEGRAM_BOT_LABEL} • Kelola Akun`,
+      "Gunakan salah satu format ini:",
+      "/accounts - ringkasan pool akun",
+      "/accounts list",
+      "/accounts add email@example.com | password",
+      "/accounts del email@example.com",
+    ].join("\n");
+  }
+
+  resolveAdminAccountsAction(commandInput = {}) {
+    const command = String(commandInput.command || "").trim().toLowerCase();
+    const rest = String(commandInput.rest || "").trim();
+
+    if (command === "/accountlist") {
+      return {
+        action: "list",
+        payload: "",
+      };
+    }
+
+    if (["/accountdel", "/accountdelete", "/accountremove"].includes(command)) {
+      return {
+        action: "delete",
+        payload: rest,
+      };
+    }
+
+    if (command === "/accountadd") {
+      return {
+        action: "add",
+        payload: rest,
+      };
+    }
+
+    if (command !== "/accounts") {
+      return {
+        action: null,
+        payload: rest,
+      };
+    }
+
+    if (!rest) {
+      return {
+        action: "summary",
+        payload: "",
+      };
+    }
+
+    const [subcommandToken = ""] = rest.split(/\s+/, 1);
+    const payload = rest.slice(subcommandToken.length).trim();
+    const subcommand = subcommandToken.toLowerCase();
+
+    if (!subcommand || ["summary", "pool"].includes(subcommand)) {
+      return {
+        action: "summary",
+        payload,
+      };
+    }
+
+    if (["list", "ls"].includes(subcommand)) {
+      return {
+        action: "list",
+        payload,
+      };
+    }
+
+    if (["add", "new", "append"].includes(subcommand)) {
+      return {
+        action: "add",
+        payload,
+      };
+    }
+
+    if (["del", "delete", "remove", "rm"].includes(subcommand)) {
+      return {
+        action: "delete",
+        payload,
+      };
+    }
+
+    return {
+      action: null,
+      payload: rest,
+    };
+  }
+
+  parseAdminAccountCredentials(payload) {
+    const raw = String(payload || "").trim();
+    const [emailPart, ...passwordParts] = raw.split("|");
+    const email = String(emailPart || "").trim();
+    const password = passwordParts.join("|").trim();
+    if (!email || !password) {
+      throw new Error('Format tambah akun tidak valid. Gunakan "email@example.com | password".');
+    }
+
+    return {
+      email,
+      password,
+    };
+  }
+
+  parseAdminAccountEmail(payload) {
+    const email = String(payload || "").trim();
+    if (!email) {
+      throw new Error("Email akun yang akan dihapus wajib diisi.");
+    }
+
+    return email;
+  }
+
+  async listConfiguredAccounts() {
+    return listAccounts(this.config.accountsFile);
+  }
+
+  buildConfiguredAccountsText(accounts = []) {
+    const lines = [
+      `${TELEGRAM_BOT_LABEL} • File Akun`,
+      `Total ${accounts.length} akun terdaftar.`,
+    ];
+
+    if (!accounts.length) {
+      lines.push("File akun masih kosong.");
+      return lines.join("\n");
+    }
+
+    lines.push("");
+    accounts.slice(0, 20).forEach((account, index) => {
+      lines.push(`${index + 1}. ${account.email}`);
+    });
+
+    if (accounts.length > 20) {
+      lines.push(`+${accounts.length - 20} akun lainnya tidak ditampilkan.`);
+    }
+
+    return lines.join("\n");
+  }
+
+  async handleAdminAccountsCommand(chatId, commandInput = {}) {
+    const operation = this.resolveAdminAccountsAction(commandInput);
+    if (operation.action === "summary") {
+      const snapshot = await this.collectAdminRuntimeSnapshot();
+      await this.sendMessage(chatId, this.buildAdminPoolText(snapshot));
+      return;
+    }
+
+    if (operation.action === "list") {
+      const accounts = await this.listConfiguredAccounts();
+      await this.sendMessage(chatId, this.buildConfiguredAccountsText(accounts));
+      return;
+    }
+
+    if (operation.action === "add") {
+      const credentials = this.parseAdminAccountCredentials(operation.payload);
+      const result = await appendAccount(this.config.accountsFile, credentials);
+      await this.sendMessage(
+        chatId,
+        [
+          `${TELEGRAM_BOT_LABEL} • Kelola Akun`,
+          "Akun baru berhasil ditambahkan.",
+          `Email: ${credentials.email}`,
+          `Total akun: ${result.totalAccounts}`,
+        ].join("\n")
+      );
+      return;
+    }
+
+    if (operation.action === "delete") {
+      const email = this.parseAdminAccountEmail(operation.payload);
+      const result = await removeAccount(this.config.accountsFile, email);
+      await this.sendMessage(
+        chatId,
+        [
+          `${TELEGRAM_BOT_LABEL} • Kelola Akun`,
+          "Akun berhasil dihapus dari file pool.",
+          `Email: ${result.removedAccount.email}`,
+          `Sisa akun: ${result.totalAccounts}`,
+        ].join("\n")
+      );
+      return;
+    }
+
+    await this.sendMessage(chatId, this.buildAdminAccountsHelpText());
   }
 
   async collectAdminRuntimeSnapshot() {
@@ -918,6 +1129,9 @@ class TelegramBotService {
       "Perintah Admin",
       "/health - status queue dan pool",
       "/pool - ringkasan akun Turnitin",
+      "/accounts list - daftar akun di file pool",
+      "/accounts add email@example.com | password",
+      "/accounts del email@example.com",
     ].join("\n");
   }
 
@@ -983,8 +1197,22 @@ class TelegramBotService {
     return lines.join("\n");
   }
 
-  async handleAdminCommand(chatId, command) {
-    const normalizedCommand = String(command || "").trim().toLowerCase();
+  async handleAdminCommand(chatId, text) {
+    const commandInput = this.parseAdminCommandInput(text);
+    const normalizedCommand = commandInput.command;
+
+    if (
+      normalizedCommand === "/accounts" ||
+      normalizedCommand === "/accountlist" ||
+      normalizedCommand === "/accountadd" ||
+      normalizedCommand === "/accountdel" ||
+      normalizedCommand === "/accountdelete" ||
+      normalizedCommand === "/accountremove"
+    ) {
+      await this.handleAdminAccountsCommand(chatId, commandInput);
+      return;
+    }
+
     const snapshot = await this.collectAdminRuntimeSnapshot();
 
     if (normalizedCommand === "/health") {
@@ -992,7 +1220,7 @@ class TelegramBotService {
       return;
     }
 
-    if (normalizedCommand === "/pool" || normalizedCommand === "/accounts") {
+    if (normalizedCommand === "/pool") {
       await this.sendMessage(chatId, this.buildAdminPoolText(snapshot));
       return;
     }
@@ -1194,6 +1422,9 @@ class TelegramBotService {
               "/admin - ringkasan runtime bot",
               "/health - status queue dan pool",
               "/pool - ringkasan akun Turnitin",
+              "/accounts list - daftar akun di file pool",
+              "/accounts add email@example.com | password",
+              "/accounts del email@example.com",
             ]
           : []),
       ].join("\n"),
