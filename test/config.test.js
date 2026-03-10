@@ -113,17 +113,20 @@ test("config exposes default panel auth credentials", () => {
 
 test("config parses admin alert chat ids and pool alert thresholds", () => {
   const previousAdminChatIds = process.env.TELEGRAM_ADMIN_CHAT_IDS;
+  const previousRestrictGeneralAccess = process.env.TELEGRAM_RESTRICT_GENERAL_ACCESS;
   const previousAccountThreshold = process.env.TURNITIN_POOL_ALERT_USABLE_ACCOUNTS_THRESHOLD;
   const previousAssignmentThreshold =
     process.env.TURNITIN_POOL_ALERT_SUBMITTABLE_ASSIGNMENTS_THRESHOLD;
 
   process.env.TELEGRAM_ADMIN_CHAT_IDS = "6669292550, 123456";
+  process.env.TELEGRAM_RESTRICT_GENERAL_ACCESS = "true";
   process.env.TURNITIN_POOL_ALERT_USABLE_ACCOUNTS_THRESHOLD = "3";
   process.env.TURNITIN_POOL_ALERT_SUBMITTABLE_ASSIGNMENTS_THRESHOLD = "9";
 
   try {
     const config = loadConfigFresh();
     assert.deepEqual(config.telegram.adminChatIds, ["6669292550", "123456"]);
+    assert.equal(config.telegram.restrictGeneralAccess, true);
     assert.equal(config.poolAlerts.usableAccountsThreshold, 3);
     assert.equal(config.poolAlerts.submittableAssignmentsThreshold, 9);
   } finally {
@@ -131,6 +134,11 @@ test("config parses admin alert chat ids and pool alert thresholds", () => {
       delete process.env.TELEGRAM_ADMIN_CHAT_IDS;
     } else {
       process.env.TELEGRAM_ADMIN_CHAT_IDS = previousAdminChatIds;
+    }
+    if (previousRestrictGeneralAccess === undefined) {
+      delete process.env.TELEGRAM_RESTRICT_GENERAL_ACCESS;
+    } else {
+      process.env.TELEGRAM_RESTRICT_GENERAL_ACCESS = previousRestrictGeneralAccess;
     }
     if (previousAccountThreshold === undefined) {
       delete process.env.TURNITIN_POOL_ALERT_USABLE_ACCOUNTS_THRESHOLD;

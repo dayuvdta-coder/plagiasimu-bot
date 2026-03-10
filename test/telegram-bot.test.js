@@ -31,6 +31,7 @@ async function createConfig() {
         botToken: "123:abc",
         enabled: true,
         allowedChatIds: [],
+        restrictGeneralAccess: false,
         adminChatIds: [],
         pollingTimeoutSeconds: 1,
         retryDelayMs: 10,
@@ -321,6 +322,131 @@ test("TelegramBotService rejects admin commands from non-admin chats", async () 
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test("TelegramBotService keeps public bot access open when general restriction is disabled", async () => {
+  const { dir, config } = await createConfig();
+  config.telegram.allowedChatIds = ["2002"];
+  config.telegram.adminChatIds = ["2002"];
+  config.telegram.restrictGeneralAccess = false;
+
+  const requests = [];
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      on() {},
+      off() {},
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 325,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: {
+        id: 1001,
+        type: "private",
+      },
+      from: {
+        id: 1001,
+        first_name: "Bob",
+      },
+      text: "/start",
+    },
+  });
+
+  const payload = requests.find((entry) => entry.url.endsWith("/sendMessage"))?.payload;
+  assert.match(payload?.text || "", /^Plagiasimu Bot/m);
+  assert.doesNotMatch(payload?.text || "", /belum diizinkan/i);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService blocks public access only when general restriction is enabled", async () => {
+  const { dir, config } = await createConfig();
+  config.telegram.allowedChatIds = ["2002"];
+  config.telegram.adminChatIds = ["2002"];
+  config.telegram.restrictGeneralAccess = true;
+
+  const requests = [];
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      on() {},
+      off() {},
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 326,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: {
+        id: 1001,
+        type: "private",
+      },
+      from: {
+        id: 1001,
+        first_name: "Bob",
+      },
+      text: "/start",
+    },
+  });
+
+  const payload = requests.find((entry) => entry.url.endsWith("/sendMessage"))?.payload;
+  assert.match(payload?.text || "", /Chat ini belum diizinkan/);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("TelegramBotService allows admin commands only for configured admin chats", async () => {
   const { dir, config } = await createConfig();
   config.telegram.allowedChatIds = ["2002"];
@@ -452,6 +578,65 @@ test("TelegramBotService allows admin commands only for configured admin chats",
   assert.match(poolPayload?.text || "", /Plagiasimu Bot • Pool Akun/);
   assert.match(poolPayload?.text || "", /one\*\*@example\.com/);
   assert.match(poolPayload?.text || "", /two\*\*@example\.com/);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService replies when the quick button lanjut cek dokumen is pressed", async () => {
+  const { dir, config } = await createConfig();
+
+  const requests = [];
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      on() {},
+      off() {},
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 327,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: {
+        id: 1001,
+        type: "private",
+      },
+      from: {
+        id: 1001,
+        first_name: "Bob",
+      },
+      text: "Lanjut Cek Dokumen",
+    },
+  });
+
+  const payload = requests.find((entry) => entry.url.endsWith("/sendMessage"))?.payload;
+  assert.match(payload?.text || "", /Kirim file baru sebagai document/);
 
   await fs.rm(dir, { recursive: true, force: true });
 });

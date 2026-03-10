@@ -179,6 +179,7 @@ module.exports = {
       booleanFromEnv("TELEGRAM_BOT_ENABLED", true) &&
       Boolean(String(process.env.TELEGRAM_BOT_TOKEN || "").trim()),
     allowedChatIds: listFromEnv("TELEGRAM_ALLOWED_CHAT_IDS"),
+    restrictGeneralAccess: booleanFromEnv("TELEGRAM_RESTRICT_GENERAL_ACCESS", false),
     adminChatIds: listFromEnv("TELEGRAM_ADMIN_CHAT_IDS"),
     pollingTimeoutSeconds: numberFromEnv("TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
     retryDelayMs: numberFromEnv("TELEGRAM_RETRY_DELAY_MS", 5000),

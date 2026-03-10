@@ -577,6 +577,13 @@ class TelegramBotService {
       }
 
       if (/^lanjut cek dokumen$/i.test(text)) {
+        await this.sendMessage(
+          chatId,
+          "Kirim file baru sebagai document untuk mulai cek dokumen berikutnya.",
+          {
+            replyMarkup: this.buildNextActionReplyMarkup(),
+          }
+        );
         return;
       }
 
@@ -752,6 +759,10 @@ class TelegramBotService {
   }
 
   isAuthorizedChat(chatId) {
+    if (!this.telegramConfig.restrictGeneralAccess) {
+      return true;
+    }
+
     const allowed = this.telegramConfig.allowedChatIds || [];
     if (!allowed.length) {
       return true;

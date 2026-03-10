@@ -128,10 +128,17 @@ Set env yang dibutuhkan:
 ```bash
 export TELEGRAM_BOT_TOKEN="123456:ABCDEF"
 export TELEGRAM_ALLOWED_CHAT_IDS="123456789,987654321"
+export TELEGRAM_RESTRICT_GENERAL_ACCESS="false"
 export TURNITIN_MAX_ATTEMPTS_PER_ASSIGNMENT="2"
 export TURNITIN_MAX_SUBMISSIONS_PER_ASSIGNMENT="2"
 npm start
 ```
+
+Catatan:
+
+- `TELEGRAM_ADMIN_CHAT_IDS` hanya membatasi command admin.
+- Bot umum tetap terbuka untuk user lain jika `TELEGRAM_RESTRICT_GENERAL_ACCESS=false`.
+- Kalau ingin bot hanya bisa dipakai chat tertentu, aktifkan `TELEGRAM_RESTRICT_GENERAL_ACCESS=true`.
 
 Kalau dijalankan lewat `systemd`, isi token dan chat id di `.env`, lalu restart:
 
