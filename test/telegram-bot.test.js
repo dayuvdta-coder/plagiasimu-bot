@@ -1065,6 +1065,192 @@ test("TelegramBotService manual payment check does not release provider-complete
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test("TelegramBotService lets admin manually approve a local payment when gateway status is stuck", async () => {
+  const { dir, config } = await createConfig();
+  config.telegram.adminChatIds = ["2002"];
+
+  const stateStore = createMemoryStateStore([
+    {
+      orderId: "PLG-APPROVE-001",
+      status: "pending",
+      amount: 5500,
+      totalPayment: 5849,
+      paymentMethod: "qris",
+      chatId: 1001,
+      originalName: "stuck.pdf",
+      title: "stuck",
+      filePath: "/tmp/stuck.pdf",
+      reportOptions: {
+        excludeQuotes: true,
+        excludeBibliography: true,
+        excludeMatches: false,
+        excludeMatchesWordCount: 10,
+      },
+      createdAt: "2026-03-10T14:30:00.000Z",
+    },
+  ]);
+
+  const requests = [];
+  let queuedPayload = null;
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      jobStore: {
+        get(jobId) {
+          return jobId === "job-approve-001" ? { id: jobId } : null;
+        },
+      },
+      enqueue(payload, options) {
+        queuedPayload = { payload, options };
+        return {
+          id: "job-approve-001",
+          originalName: payload.originalName,
+          title: payload.title,
+          queuePosition: 1,
+        };
+      },
+      async requestPump() {},
+      scheduleEnqueueWatchdog() {},
+      on() {},
+      off() {},
+    },
+    stateStore,
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 1350 + requests.length,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: {
+        id: 2002,
+        type: "private",
+      },
+      from: {
+        id: 2002,
+        first_name: "Admin",
+      },
+      text: "/paymentapprove PLG-APPROVE-001",
+    },
+  });
+
+  const adminPayload = requests.find(
+    (entry) =>
+      entry.url.endsWith("/sendMessage") && String(entry.payload?.chat_id) === "2002"
+  )?.payload;
+  const userPayload = requests.find(
+    (entry) =>
+      entry.url.endsWith("/sendMessage") && String(entry.payload?.chat_id) === "1001"
+  )?.payload;
+
+  assert.ok(queuedPayload);
+  assert.equal(queuedPayload.payload.originalName, "stuck.pdf");
+  assert.deepEqual(queuedPayload.options, { autoStart: false });
+  assert.equal(stateStore.getPayment("PLG-APPROVE-001")?.status, "completed");
+  assert.equal(stateStore.getPayment("PLG-APPROVE-001")?.jobId, "job-approve-001");
+  assert.equal(
+    stateStore.getPayment("PLG-APPROVE-001")?.verificationSource,
+    "admin-manual-approve"
+  );
+  assert.match(adminPayload?.text || "", /Manual Payment Approve/);
+  assert.match(adminPayload?.text || "", /di-acc manual oleh admin/i);
+  assert.match(userPayload?.text || "", /Pembayaran Rp/);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService blocks manual payment approve when local invoice is missing", async () => {
+  const { dir, config } = await createConfig();
+  config.telegram.adminChatIds = ["2002"];
+
+  let enqueueCount = 0;
+  const requests = [];
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      enqueue() {
+        enqueueCount += 1;
+        return {
+          id: "job-should-not-run",
+          queuePosition: 1,
+        };
+      },
+      async requestPump() {},
+      scheduleEnqueueWatchdog() {},
+      on() {},
+      off() {},
+    },
+    stateStore: createMemoryStateStore(),
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 1400,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: {
+        id: 2002,
+        type: "private",
+      },
+      from: {
+        id: 2002,
+        first_name: "Admin",
+      },
+      text: "/paymentapprove PLG-APPROVE-404",
+    },
+  });
+
+  const adminPayload = requests.find((entry) => entry.url.endsWith("/sendMessage"))?.payload;
+  assert.equal(enqueueCount, 0);
+  assert.match(adminPayload?.text || "", /Manual Payment Approve/);
+  assert.match(adminPayload?.text || "", /invoice tidak ditemukan di state lokal/i);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("TelegramBotService creates a Pakasir invoice before enqueue when payment is enabled", async () => {
   const { dir, config } = await createConfig();
   await fs.mkdir(config.storage.uploadsDir, { recursive: true });

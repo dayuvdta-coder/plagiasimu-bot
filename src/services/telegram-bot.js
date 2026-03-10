@@ -65,6 +65,10 @@ const ADMIN_COMMANDS = new Set([
   "/paymentcheck",
   "/paycheck",
   "/invoicecheck",
+  "/paymentapprove",
+  "/payapprove",
+  "/invoiceapprove",
+  "/paymentacc",
 ]);
 const PAYMENT_TERMINAL_STATUSES = new Set(["completed", "cancelled", "expired", "failed"]);
 
@@ -908,6 +912,7 @@ class TelegramBotService {
             "/accounts add email@example.com | password",
             "/accounts del email@example.com",
             "/paymentcheck ORDER_ID - cek paksa status invoice",
+            "/paymentapprove ORDER_ID - acc manual invoice lokal",
           ]
         : []),
     ].join("\n");
@@ -961,6 +966,17 @@ class TelegramBotService {
       "/paymentcheck ORDER_ID",
       "/paycheck ORDER_ID",
       "/invoicecheck ORDER_ID",
+    ].join("\n");
+  }
+
+  buildAdminPaymentApproveHelpText() {
+    return [
+      `${TELEGRAM_BOT_LABEL} • Manual Payment Approve`,
+      "Gunakan salah satu format ini:",
+      "/paymentapprove ORDER_ID",
+      "/payapprove ORDER_ID",
+      "/invoiceapprove ORDER_ID",
+      "/paymentacc ORDER_ID",
     ].join("\n");
   }
 
@@ -1232,6 +1248,7 @@ class TelegramBotService {
       "/accounts add email@example.com | password",
       "/accounts del email@example.com",
       "/paymentcheck ORDER_ID - cek paksa status invoice",
+      "/paymentapprove ORDER_ID - acc manual invoice lokal",
     ].join("\n");
   }
 
@@ -1317,6 +1334,32 @@ class TelegramBotService {
       `Metode ${methodLabel}`,
       `Status Lokal ${localStatus}`,
       `Status Provider ${providerStatus || "-"}`,
+      localPayment?.completedAt ? `Completed ${formatTimeWib(localPayment.completedAt)} WIB` : null,
+      job?.id ? `Job ID ${job.id}` : null,
+      note || null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  buildAdminPaymentApproveText({
+    orderId,
+    localPayment = null,
+    note = null,
+    job = null,
+  } = {}) {
+    const localStatus = String(localPayment?.status || "").trim().toLowerCase() || "tidak-ada";
+    const methodLabel = String(
+      localPayment?.paymentMethod || this.pakasirConfig.method || "qris"
+    ).toUpperCase();
+
+    return [
+      `${TELEGRAM_BOT_LABEL} • Manual Payment Approve`,
+      `Order ID ${orderId || "-"}`,
+      localPayment?.originalName ? `Dokumen ${truncate(localPayment.originalName, 64)}` : null,
+      localPayment?.amount ? `Tagihan ${formatCurrencyIdr(localPayment.amount)}` : null,
+      `Metode ${methodLabel}`,
+      `Status Lokal ${localStatus}`,
       localPayment?.completedAt ? `Completed ${formatTimeWib(localPayment.completedAt)} WIB` : null,
       job?.id ? `Job ID ${job.id}` : null,
       note || null,
@@ -1480,6 +1523,78 @@ class TelegramBotService {
     );
   }
 
+  async handleAdminPaymentApproveCommand(chatId, commandInput = {}) {
+    let orderId = "";
+    try {
+      orderId = this.parseAdminPaymentOrderId(commandInput.rest);
+    } catch (error) {
+      await this.sendMessage(
+        chatId,
+        [this.buildAdminPaymentApproveHelpText(), "", truncate(error.message, 160)].join("\n")
+      );
+      return;
+    }
+
+    const localPayment = this.getKnownPayment(orderId);
+    if (!localPayment) {
+      await this.sendMessage(
+        chatId,
+        this.buildAdminPaymentApproveText({
+          orderId,
+          note:
+            "Invoice tidak ditemukan di state lokal. Override manual diblok agar tidak melepas dokumen yang salah.",
+        })
+      );
+      return;
+    }
+
+    const trackedPayment = this.ensureTrackedPayment(orderId, localPayment);
+    if (!trackedPayment?.filePath || trackedPayment.chatId === undefined || trackedPayment.chatId === null) {
+      await this.sendMessage(
+        chatId,
+        this.buildAdminPaymentApproveText({
+          orderId,
+          localPayment: trackedPayment || localPayment,
+          note:
+            "State lokal invoice tidak lengkap untuk melepas dokumen ke queue. Cek filePath/chatId invoice ini.",
+        })
+      );
+      return;
+    }
+
+    try {
+      const job = await this.completePendingPayment(orderId, {
+        transaction: {
+          status: "completed",
+          paymentMethod: trackedPayment.paymentMethod || this.pakasirConfig.method || "qris",
+          completedAt: trackedPayment.completedAt || new Date().toISOString(),
+        },
+        source: "admin-manual-approve",
+      });
+      await this.sendMessage(
+        chatId,
+        this.buildAdminPaymentApproveText({
+          orderId,
+          localPayment: trackedPayment,
+          job,
+          note: job?.id
+            ? "Invoice di-acc manual oleh admin dan dokumen dilepas ke queue."
+            : "Invoice sudah dianggap completed. Tidak ada job baru yang perlu dibuat.",
+        })
+      );
+      return;
+    } catch (error) {
+      await this.sendMessage(
+        chatId,
+        this.buildAdminPaymentApproveText({
+          orderId,
+          localPayment: trackedPayment,
+          note: `Acc manual gagal: ${truncate(error.message, 160)}`,
+        })
+      );
+    }
+  }
+
   async handleAdminCommand(chatId, text) {
     const commandInput = this.parseAdminCommandInput(text);
     const normalizedCommand = commandInput.command;
@@ -1502,6 +1617,16 @@ class TelegramBotService {
       normalizedCommand === "/invoicecheck"
     ) {
       await this.handleAdminPaymentCheckCommand(chatId, commandInput);
+      return;
+    }
+
+    if (
+      normalizedCommand === "/paymentapprove" ||
+      normalizedCommand === "/payapprove" ||
+      normalizedCommand === "/invoiceapprove" ||
+      normalizedCommand === "/paymentacc"
+    ) {
+      await this.handleAdminPaymentApproveCommand(chatId, commandInput);
       return;
     }
 
@@ -1718,6 +1843,7 @@ class TelegramBotService {
               "/accounts add email@example.com | password",
               "/accounts del email@example.com",
               "/paymentcheck ORDER_ID - cek paksa status invoice",
+              "/paymentapprove ORDER_ID - acc manual invoice lokal",
             ]
           : []),
       ].join("\n"),
