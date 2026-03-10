@@ -826,6 +826,245 @@ test("TelegramBotService sends pool alert only to configured admin chats", async
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test("TelegramBotService lets admin manually confirm a completed payment and release the job", async () => {
+  const { dir, config } = await createConfig();
+  config.telegram.adminChatIds = ["2002"];
+  config.pakasir = {
+    ...config.pakasir,
+    enabled: true,
+    project: "plagiasimu-bot",
+    apiKey: "secret",
+    amount: 5500,
+    method: "qris",
+    qrisOnly: true,
+  };
+
+  const stateStore = createMemoryStateStore([
+    {
+      orderId: "PLG-MANUAL-001",
+      status: "pending",
+      amount: 5500,
+      totalPayment: 5849,
+      paymentMethod: "qris",
+      chatId: 1001,
+      originalName: "manual.pdf",
+      title: "manual",
+      filePath: "/tmp/manual.pdf",
+      reportOptions: {
+        excludeQuotes: true,
+        excludeBibliography: true,
+        excludeMatches: false,
+        excludeMatchesWordCount: 10,
+      },
+      createdAt: "2026-03-10T14:00:00.000Z",
+    },
+  ]);
+
+  const requests = [];
+  let queuedPayload = null;
+  const jobRunner = {
+    jobStore: {
+      get(jobId) {
+        return jobId === "job-manual-001" ? { id: jobId } : null;
+      },
+    },
+    enqueue(payload, options) {
+      queuedPayload = { payload, options };
+      return {
+        id: "job-manual-001",
+        originalName: payload.originalName,
+        title: payload.title,
+        queuePosition: 1,
+      };
+    },
+    async requestPump() {},
+    scheduleEnqueueWatchdog() {},
+    on() {},
+    off() {},
+  };
+
+  const service = new TelegramBotService({
+    config,
+    jobRunner,
+    stateStore,
+    paymentService: {
+      isConfigured() {
+        return true;
+      },
+      async getTransactionDetail() {
+        return {
+          transaction: {
+            orderId: "PLG-MANUAL-001",
+            amount: 5500,
+            project: "plagiasimu-bot",
+            status: "completed",
+            paymentMethod: "qris",
+            completedAt: "2026-03-10T21:40:00.000Z",
+          },
+        };
+      },
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 1200 + requests.length,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: {
+        id: 2002,
+        type: "private",
+      },
+      from: {
+        id: 2002,
+        first_name: "Admin",
+      },
+      text: "/paymentcheck PLG-MANUAL-001",
+    },
+  });
+
+  const adminPayload = requests.find(
+    (entry) =>
+      entry.url.endsWith("/sendMessage") && String(entry.payload?.chat_id) === "2002"
+  )?.payload;
+  const userPayload = requests.find(
+    (entry) =>
+      entry.url.endsWith("/sendMessage") && String(entry.payload?.chat_id) === "1001"
+  )?.payload;
+
+  assert.ok(queuedPayload);
+  assert.equal(queuedPayload.payload.originalName, "manual.pdf");
+  assert.deepEqual(queuedPayload.options, { autoStart: false });
+  assert.equal(stateStore.getPayment("PLG-MANUAL-001")?.status, "completed");
+  assert.equal(stateStore.getPayment("PLG-MANUAL-001")?.jobId, "job-manual-001");
+  assert.equal(stateStore.getPayment("PLG-MANUAL-001")?.verificationSource, "admin-manual-check");
+  assert.match(adminPayload?.text || "", /Manual Payment Check/);
+  assert.match(adminPayload?.text || "", /Status Provider completed/);
+  assert.match(adminPayload?.text || "", /Job ID job-manual-001/);
+  assert.match(adminPayload?.text || "", /dilepas ke queue/i);
+  assert.match(userPayload?.text || "", /Pembayaran Rp/);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService manual payment check does not release provider-completed payments without local state", async () => {
+  const { dir, config } = await createConfig();
+  config.telegram.adminChatIds = ["2002"];
+  config.pakasir = {
+    ...config.pakasir,
+    enabled: true,
+    project: "plagiasimu-bot",
+    apiKey: "secret",
+    amount: 5500,
+    method: "qris",
+    qrisOnly: true,
+  };
+
+  let enqueueCount = 0;
+  const requests = [];
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      enqueue() {
+        enqueueCount += 1;
+        return {
+          id: "job-should-not-run",
+          queuePosition: 1,
+        };
+      },
+      async requestPump() {},
+      scheduleEnqueueWatchdog() {},
+      on() {},
+      off() {},
+    },
+    stateStore: createMemoryStateStore(),
+    paymentService: {
+      isConfigured() {
+        return true;
+      },
+      async getTransactionDetail() {
+        return {
+          transaction: {
+            orderId: "PLG-MANUAL-404",
+            amount: 5500,
+            project: "plagiasimu-bot",
+            status: "completed",
+            paymentMethod: "qris",
+            completedAt: "2026-03-10T21:41:00.000Z",
+          },
+        };
+      },
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 1300,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: {
+        id: 2002,
+        type: "private",
+      },
+      from: {
+        id: 2002,
+        first_name: "Admin",
+      },
+      text: "/paymentcheck PLG-MANUAL-404",
+    },
+  });
+
+  const adminPayload = requests.find((entry) => entry.url.endsWith("/sendMessage"))?.payload;
+  assert.equal(enqueueCount, 0);
+  assert.match(adminPayload?.text || "", /Status Provider completed/);
+  assert.match(adminPayload?.text || "", /state lokal invoice tidak ditemukan/i);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("TelegramBotService creates a Pakasir invoice before enqueue when payment is enabled", async () => {
   const { dir, config } = await createConfig();
   await fs.mkdir(config.storage.uploadsDir, { recursive: true });

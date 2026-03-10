@@ -62,6 +62,9 @@ const ADMIN_COMMANDS = new Set([
   "/accountdel",
   "/accountdelete",
   "/accountremove",
+  "/paymentcheck",
+  "/paycheck",
+  "/invoicecheck",
 ]);
 const PAYMENT_TERMINAL_STATUSES = new Set(["completed", "cancelled", "expired", "failed"]);
 
@@ -353,24 +356,67 @@ class TelegramBotService {
 
     const records = this.stateStore.listPendingPayments(100);
     for (const record of records) {
-      const orderId = String(record?.orderId || "").trim();
-      if (!orderId) {
-        continue;
-      }
-
-      this.pendingPayments.set(orderId, {
-        ...record,
-        statusMessageId:
-          record?.statusMessageKind === "photo"
-            ? record?.qrMessageId || record?.statusMessageId || null
-            : record?.statusMessageId || null,
-        statusMessageKind:
-          record?.statusMessageKind || (record?.qrMessageId ? "photo" : "text"),
-        lastStatusText: null,
-        lastReplyMarkupKey: "",
-        lastQrMediaKey: "",
-      });
+      this.hydratePendingPaymentRecord(record);
     }
+  }
+
+  hydratePendingPaymentRecord(record = {}) {
+    const orderId = String(record?.orderId || "").trim();
+    if (!orderId) {
+      return null;
+    }
+
+    const existing = this.pendingPayments.get(orderId) || null;
+    const hydrated = {
+      ...(existing || {}),
+      ...record,
+      orderId,
+      statusMessageId:
+        record?.statusMessageKind === "photo"
+          ? record?.qrMessageId || record?.statusMessageId || null
+          : record?.statusMessageId || null,
+      statusMessageKind:
+        record?.statusMessageKind ||
+        existing?.statusMessageKind ||
+        (record?.qrMessageId ? "photo" : "text"),
+      lastStatusText: existing?.lastStatusText || null,
+      lastReplyMarkupKey: existing?.lastReplyMarkupKey || "",
+      lastQrMediaKey: existing?.lastQrMediaKey || "",
+    };
+    this.pendingPayments.set(orderId, hydrated);
+    return hydrated;
+  }
+
+  getKnownPayment(orderId) {
+    const normalizedOrderId = String(orderId || "").trim();
+    if (!normalizedOrderId) {
+      return null;
+    }
+
+    return (
+      this.pendingPayments.get(normalizedOrderId) ||
+      this.stateStore?.getPayment?.(normalizedOrderId) ||
+      null
+    );
+  }
+
+  ensureTrackedPayment(orderId, fallbackPayment = null) {
+    const normalizedOrderId = String(orderId || "").trim();
+    if (!normalizedOrderId) {
+      return null;
+    }
+
+    const existing = this.pendingPayments.get(normalizedOrderId);
+    if (existing) {
+      return existing;
+    }
+
+    const storedPayment = fallbackPayment || this.stateStore?.getPayment?.(normalizedOrderId);
+    if (!storedPayment) {
+      return null;
+    }
+
+    return this.hydratePendingPaymentRecord(storedPayment);
   }
 
   start() {
@@ -861,6 +907,7 @@ class TelegramBotService {
             "/accounts list - daftar akun di file pool",
             "/accounts add email@example.com | password",
             "/accounts del email@example.com",
+            "/paymentcheck ORDER_ID - cek paksa status invoice",
           ]
         : []),
     ].join("\n");
@@ -904,6 +951,16 @@ class TelegramBotService {
       "/accounts list",
       "/accounts add email@example.com | password",
       "/accounts del email@example.com",
+    ].join("\n");
+  }
+
+  buildAdminPaymentCheckHelpText() {
+    return [
+      `${TELEGRAM_BOT_LABEL} • Manual Payment Check`,
+      "Gunakan salah satu format ini:",
+      "/paymentcheck ORDER_ID",
+      "/paycheck ORDER_ID",
+      "/invoicecheck ORDER_ID",
     ].join("\n");
   }
 
@@ -1003,6 +1060,15 @@ class TelegramBotService {
     }
 
     return email;
+  }
+
+  parseAdminPaymentOrderId(payload) {
+    const orderId = String(payload || "").trim();
+    if (!orderId) {
+      throw new Error("Order ID wajib diisi. Contoh: /paymentcheck PLG-260310-XXXX");
+    }
+
+    return orderId;
   }
 
   async listConfiguredAccounts() {
@@ -1165,6 +1231,7 @@ class TelegramBotService {
       "/accounts list - daftar akun di file pool",
       "/accounts add email@example.com | password",
       "/accounts del email@example.com",
+      "/paymentcheck ORDER_ID - cek paksa status invoice",
     ].join("\n");
   }
 
@@ -1230,6 +1297,189 @@ class TelegramBotService {
     return lines.join("\n");
   }
 
+  buildAdminPaymentCheckText({
+    orderId,
+    localPayment = null,
+    providerStatus = null,
+    note = null,
+    job = null,
+  } = {}) {
+    const localStatus = String(localPayment?.status || "").trim().toLowerCase() || "tidak-ada";
+    const methodLabel = String(
+      localPayment?.paymentMethod || this.pakasirConfig.method || "qris"
+    ).toUpperCase();
+
+    return [
+      `${TELEGRAM_BOT_LABEL} • Manual Payment Check`,
+      `Order ID ${orderId || "-"}`,
+      localPayment?.originalName ? `Dokumen ${truncate(localPayment.originalName, 64)}` : null,
+      localPayment?.amount ? `Tagihan ${formatCurrencyIdr(localPayment.amount)}` : null,
+      `Metode ${methodLabel}`,
+      `Status Lokal ${localStatus}`,
+      `Status Provider ${providerStatus || "-"}`,
+      localPayment?.completedAt ? `Completed ${formatTimeWib(localPayment.completedAt)} WIB` : null,
+      job?.id ? `Job ID ${job.id}` : null,
+      note || null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  async handleAdminPaymentCheckCommand(chatId, commandInput = {}) {
+    if (!this.isPaymentEnabled()) {
+      await this.sendMessage(
+        chatId,
+        [
+          `${TELEGRAM_BOT_LABEL} • Manual Payment Check`,
+          "Pembayaran Pakasir sedang nonaktif atau konfigurasi belum lengkap.",
+        ].join("\n")
+      );
+      return;
+    }
+
+    let orderId = "";
+    try {
+      orderId = this.parseAdminPaymentOrderId(commandInput.rest);
+    } catch (error) {
+      await this.sendMessage(
+        chatId,
+        [this.buildAdminPaymentCheckHelpText(), "", truncate(error.message, 160)].join("\n")
+      );
+      return;
+    }
+
+    const localPayment = this.getKnownPayment(orderId);
+    const requestAmount = localPayment?.amount || this.pakasirConfig.amount;
+    let detail = null;
+    try {
+      detail = await this.paymentService.getTransactionDetail({
+        orderId,
+        amount: requestAmount,
+      });
+    } catch (error) {
+      const message = String(error.message || "");
+      const isNotFound = /not found|tidak ditemukan|404/i.test(message);
+      const lastCheckedAt = new Date().toISOString();
+      if (localPayment) {
+        const trackedPayment = this.ensureTrackedPayment(orderId, localPayment);
+        if (trackedPayment) {
+          trackedPayment.lastCheckedAt = lastCheckedAt;
+        }
+        await this.updateStoredPayment(orderId, {
+          lastCheckedAt,
+        });
+      }
+
+      await this.sendMessage(
+        chatId,
+        this.buildAdminPaymentCheckText({
+          orderId,
+          localPayment,
+          providerStatus: isNotFound ? "not_found" : "error",
+          note: isNotFound
+            ? "Transaksi belum ditemukan di Pakasir. Cek order_id, nominal, atau buat invoice baru."
+            : `Request Pakasir gagal: ${truncate(message, 160)}`,
+        })
+      );
+      return;
+    }
+
+    const transaction = detail?.transaction || {};
+    const providerStatus = String(transaction.status || "pending").trim().toLowerCase() || "pending";
+    const trackedPayment = localPayment ? this.ensureTrackedPayment(orderId, localPayment) : null;
+    const lastCheckedAt = new Date().toISOString();
+
+    if (trackedPayment) {
+      trackedPayment.providerStatus = providerStatus;
+      trackedPayment.paymentMethod = transaction.paymentMethod || trackedPayment.paymentMethod;
+      trackedPayment.lastCheckedAt = lastCheckedAt;
+      if (transaction.completedAt) {
+        trackedPayment.completedAt = transaction.completedAt;
+      }
+      await this.updateStoredPayment(orderId, {
+        providerStatus,
+        paymentMethod: trackedPayment.paymentMethod,
+        lastCheckedAt,
+        completedAt: transaction.completedAt || trackedPayment.completedAt || null,
+      });
+    }
+
+    if (providerStatus === "completed") {
+      if (!trackedPayment) {
+        await this.sendMessage(
+          chatId,
+          this.buildAdminPaymentCheckText({
+            orderId,
+            providerStatus,
+            note:
+              "Transaksi completed di Pakasir, tetapi state lokal invoice tidak ditemukan. Dokumen tidak bisa dilepas otomatis.",
+          })
+        );
+        return;
+      }
+
+      if (!trackedPayment.filePath || trackedPayment.chatId === undefined || trackedPayment.chatId === null) {
+        await this.sendMessage(
+          chatId,
+          this.buildAdminPaymentCheckText({
+            orderId,
+            localPayment: trackedPayment,
+            providerStatus,
+            note:
+              "State lokal invoice tidak lengkap untuk melepas dokumen ke queue. Cek filePath/chatId invoice ini.",
+          })
+        );
+        return;
+      }
+
+      try {
+        const job = await this.completePendingPayment(orderId, {
+          transaction,
+          source: "admin-manual-check",
+        });
+        await this.sendMessage(
+          chatId,
+          this.buildAdminPaymentCheckText({
+            orderId,
+            localPayment: trackedPayment,
+            providerStatus,
+            job,
+            note: job?.id
+              ? "Pembayaran terkonfirmasi dan dokumen dilepas ke queue."
+              : "Pembayaran sudah completed. Tidak ada job baru yang perlu dibuat.",
+          })
+        );
+        return;
+      } catch (error) {
+        await this.sendMessage(
+          chatId,
+          this.buildAdminPaymentCheckText({
+            orderId,
+            localPayment: trackedPayment,
+            providerStatus,
+            note: `Status provider completed, tetapi pelepasan job gagal: ${truncate(
+              error.message,
+              160
+            )}`,
+          })
+        );
+        return;
+      }
+    }
+
+    await this.sendMessage(
+      chatId,
+      this.buildAdminPaymentCheckText({
+        orderId,
+        localPayment: trackedPayment || localPayment,
+        providerStatus,
+        note: localPayment
+          ? "Status masih pending. Dokumen belum dilepas ke queue."
+          : "Order belum ada di state lokal, jadi belum ada dokumen yang bisa dilepas.",
+      })
+    );
+  }
+
   async handleAdminCommand(chatId, text) {
     const commandInput = this.parseAdminCommandInput(text);
     const normalizedCommand = commandInput.command;
@@ -1243,6 +1493,15 @@ class TelegramBotService {
       normalizedCommand === "/accountremove"
     ) {
       await this.handleAdminAccountsCommand(chatId, commandInput);
+      return;
+    }
+
+    if (
+      normalizedCommand === "/paymentcheck" ||
+      normalizedCommand === "/paycheck" ||
+      normalizedCommand === "/invoicecheck"
+    ) {
+      await this.handleAdminPaymentCheckCommand(chatId, commandInput);
       return;
     }
 
@@ -1458,6 +1717,7 @@ class TelegramBotService {
               "/accounts list - daftar akun di file pool",
               "/accounts add email@example.com | password",
               "/accounts del email@example.com",
+              "/paymentcheck ORDER_ID - cek paksa status invoice",
             ]
           : []),
       ].join("\n"),
