@@ -1092,6 +1092,74 @@ test("applyViewerReportOptions captures filtered similarity from viewer options 
   assert.equal(putHeaders?.["content-type"], "application/json");
 });
 
+test("applyViewerReportOptions retries similarity options endpoint before falling back", async () => {
+  const automation = createAutomation();
+  let getCallCount = 0;
+  let uiFallbackCalls = 0;
+
+  automation.applyViewerReportOptionsInViewer = async () => {
+    uiFallbackCalls += 1;
+    return true;
+  };
+  automation.waitForViewerReportOptionsSync = async () => ({
+    currentOptions: {
+      exclude_quotes: 1,
+      exclude_biblio: 1,
+      exclude_small_matches: 0,
+    },
+    viewerSimilarity: "44%",
+  });
+
+  const result = await automation.applyViewerReportOptions({
+    viewerPage: {
+      url: () => "https://ev.turnitin.com/app/carta/en_us/?o=123&lang=en_us",
+      waitForTimeout: async () => {},
+    },
+    context: {
+      request: {
+        get: async () => {
+          getCallCount += 1;
+          if (getCallCount < 3) {
+            return null;
+          }
+          return {
+            ok: () => true,
+            json: async () => ({
+              OriginalityOptions: [
+                {
+                  exclude_quotes: 0,
+                  exclude_biblio: 0,
+                  exclude_small_matches: 0,
+                },
+              ],
+            }),
+          };
+        },
+        put: async () => ({
+          ok: () => true,
+          json: async () => ({
+            report: {
+              overlap: 44,
+            },
+          }),
+        }),
+      },
+    },
+    reportOptions: {
+      excludeQuotes: true,
+      excludeBibliography: true,
+      excludeMatches: false,
+    },
+    reportUrl: "https://ev.turnitin.com/app/carta/en_us/?o=123&lang=en_us",
+    onLog() {},
+  });
+
+  assert.equal(getCallCount, 3);
+  assert.equal(uiFallbackCalls, 0);
+  assert.equal(result.viewerSimilarity, "44%");
+  assert.equal(result.viewerFiltersConfirmed, true);
+});
+
 test("downloadQueuedViewerPdfFromReportUrl polls queue until PDF buffer is ready", async () => {
   const automation = createAutomation({
     currentViewQueueTimeoutMs: 5 * 1000,
@@ -1499,6 +1567,58 @@ test("saveValidatedViewerPdf rejects PDF when requested viewer filters are not r
     assert.ok(
       logs.some((message) => message.includes("belum mengikuti filter viewer yang diminta"))
     );
+  } finally {
+    await fs.rm(reportDir, { recursive: true, force: true });
+  }
+});
+
+test("saveValidatedViewerPdf keeps valid report when viewer filters were not confirmed and PDF metadata has no filter state", async () => {
+  const reportDir = await fs.mkdtemp(path.join(os.tmpdir(), "turnitin-viewer-pdf-"));
+  const automation = new TurnitinAutomation({
+    ...createAutomation().config,
+    storage: {},
+  });
+  const logs = [];
+  const pdfPath = path.join(reportDir, "similarity-report.pdf");
+
+  automation.readTurnitinReportPdfMetadata = async () => ({
+    valid: true,
+    isPdf: true,
+    readable: true,
+    similarity: "80%",
+    filterStates: {
+      excludeQuotes: null,
+      excludeBibliography: null,
+      excludeMatches: null,
+      excludeMatchesWordCount: null,
+    },
+  });
+  automation.exportCurrentViewCopy = async () => {};
+
+  try {
+    const expectedReportOptions = {
+      excludeQuotes: true,
+      excludeBibliography: true,
+      excludeMatches: false,
+      excludeMatchesWordCount: 10,
+    };
+    Object.defineProperty(expectedReportOptions, "viewerFiltersConfirmed", {
+      value: false,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+
+    const result = await automation.saveValidatedViewerPdf({
+      pdfPath,
+      pdfBuffer: Buffer.from("%PDF-1.4\nfake filtered response"),
+      expectedReportOptions,
+      onLog: (message) => logs.push(message),
+      sourceLabel: "queue viewer",
+    });
+
+    assert.equal(result, pdfPath);
+    assert.equal(logs.some((message) => message.includes("belum mengikuti filter viewer")), false);
   } finally {
     await fs.rm(reportDir, { recursive: true, force: true });
   }

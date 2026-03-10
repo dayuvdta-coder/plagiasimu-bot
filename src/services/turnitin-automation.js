@@ -1442,6 +1442,9 @@ class TurnitinAutomation {
             });
 
             if (viewerBootstrapReady) {
+              if (requiresViewerFilterAwareDownload) {
+                await this.waitForViewerReady(viewerPage, onLog);
+              }
               appliedReportOptions = await this.applyViewerReportOptions({
                 viewerPage,
                 context,
@@ -1451,6 +1454,23 @@ class TurnitinAutomation {
               });
               if (appliedReportOptions?.viewerSimilarity) {
                 currentViewSimilarity = appliedReportOptions.viewerSimilarity;
+              }
+
+              if (
+                requiresViewerFilterAwareDownload &&
+                !this.areViewerFiltersConfirmed(appliedReportOptions)
+              ) {
+                onLog("Filter viewer belum terkonfirmasi, coba sinkron ulang setelah viewer siap.");
+                appliedReportOptions = await this.applyViewerReportOptions({
+                  viewerPage,
+                  context,
+                  reportOptions: normalizedReportOptions,
+                  reportUrl,
+                  onLog,
+                });
+                if (appliedReportOptions?.viewerSimilarity) {
+                  currentViewSimilarity = appliedReportOptions.viewerSimilarity;
+                }
               }
             }
 
@@ -1902,15 +1922,18 @@ class TurnitinAutomation {
     const requestHeaders = this.buildViewerQueueHeaders({
       referer: similarityEndpoint.viewerReferenceUrl,
     });
-    const response = await context.request
-      .get(optionsUrl, {
-        headers: requestHeaders,
-      })
-      .catch(() => null);
+    const response = await this.waitForViewerSimilarityOptionsResponse({
+      context,
+      optionsUrl,
+      headers: requestHeaders,
+      viewerPage,
+    });
     if (!response?.ok()) {
       if (!viewerPage) {
         onLog("Gagal membaca opsi similarity viewer, filter viewer dilewati.");
-        return normalized;
+        return this.attachViewerProcessingMetadata(normalized, {
+          viewerFiltersConfirmed: false,
+        });
       }
       const appliedViaUi = await this.applyViewerReportOptionsInViewer({
         viewerPage,
@@ -1926,7 +1949,10 @@ class TurnitinAutomation {
         reportUrl,
         reportOptions: normalized,
       });
-      return this.attachViewerSimilarityMetadata(normalized, synced?.viewerSimilarity || null);
+      return this.attachViewerProcessingMetadata(normalized, {
+        viewerSimilarity: synced?.viewerSimilarity || null,
+        viewerFiltersConfirmed: Boolean(synced),
+      });
     }
 
     const data = await response.json().catch(() => ({}));
@@ -1934,7 +1960,9 @@ class TurnitinAutomation {
     if (!currentOptions) {
       if (!viewerPage) {
         onLog("Payload opsi similarity viewer tidak tersedia, filter viewer dilewati.");
-        return normalized;
+        return this.attachViewerProcessingMetadata(normalized, {
+          viewerFiltersConfirmed: false,
+        });
       }
       const appliedViaUi = await this.applyViewerReportOptionsInViewer({
         viewerPage,
@@ -1950,7 +1978,10 @@ class TurnitinAutomation {
         reportUrl,
         reportOptions: normalized,
       });
-      return this.attachViewerSimilarityMetadata(normalized, synced?.viewerSimilarity || null);
+      return this.attachViewerProcessingMetadata(normalized, {
+        viewerSimilarity: synced?.viewerSimilarity || null,
+        viewerFiltersConfirmed: Boolean(synced),
+      });
     }
 
     const nextOptions = {
@@ -1968,7 +1999,10 @@ class TurnitinAutomation {
       Number(currentOptions.exclude_small_matches || 0) !==
         nextOptions.exclude_small_matches;
     if (!changed) {
-      return normalized;
+      return this.attachViewerProcessingMetadata(normalized, {
+        viewerSimilarity: this.extractViewerSimilarityOptionsState(data).viewerSimilarity,
+        viewerFiltersConfirmed: true,
+      });
     }
 
     const enabledFilters = this.listEnabledViewerFilters(normalized);
@@ -1986,7 +2020,9 @@ class TurnitinAutomation {
     if (!updateResponse?.ok()) {
       if (!viewerPage) {
         onLog("Update filter viewer gagal, melanjutkan tanpa perubahan filter.");
-        return normalized;
+        return this.attachViewerProcessingMetadata(normalized, {
+          viewerFiltersConfirmed: false,
+        });
       }
       const appliedViaUi = await this.applyViewerReportOptionsInViewer({
         viewerPage,
@@ -2002,7 +2038,10 @@ class TurnitinAutomation {
         reportUrl,
         reportOptions: normalized,
       });
-      return this.attachViewerSimilarityMetadata(normalized, synced?.viewerSimilarity || null);
+      return this.attachViewerProcessingMetadata(normalized, {
+        viewerSimilarity: synced?.viewerSimilarity || null,
+        viewerFiltersConfirmed: Boolean(synced),
+      });
     }
 
     const updatePayload = await updateResponse.json().catch(() => ({}));
@@ -2023,7 +2062,10 @@ class TurnitinAutomation {
     } else {
       await new Promise((resolve) => setTimeout(resolve, 1200));
     }
-    return this.attachViewerSimilarityMetadata(normalized, viewerSimilarity);
+    return this.attachViewerProcessingMetadata(normalized, {
+      viewerSimilarity,
+      viewerFiltersConfirmed: true,
+    });
   }
 
   buildViewerSimilarityOptionsUrl({ viewerPage = null, reportUrl = null } = {}) {
@@ -2085,6 +2127,88 @@ class TurnitinAutomation {
     return reportOptions;
   }
 
+  attachViewerFilterConfirmationMetadata(reportOptions, viewerFiltersConfirmed = null) {
+    if (!reportOptions || viewerFiltersConfirmed === null || viewerFiltersConfirmed === undefined) {
+      return reportOptions;
+    }
+
+    Object.defineProperty(reportOptions, "viewerFiltersConfirmed", {
+      value: Boolean(viewerFiltersConfirmed),
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    return reportOptions;
+  }
+
+  attachViewerProcessingMetadata(
+    reportOptions,
+    { viewerSimilarity = null, viewerFiltersConfirmed = null } = {}
+  ) {
+    this.attachViewerSimilarityMetadata(reportOptions, viewerSimilarity);
+    this.attachViewerFilterConfirmationMetadata(reportOptions, viewerFiltersConfirmed);
+    return reportOptions;
+  }
+
+  areViewerFiltersConfirmed(reportOptions = null) {
+    return reportOptions?.viewerFiltersConfirmed !== false;
+  }
+
+  pdfHasExplicitFilterStates(pdfMetadata = {}) {
+    const filterStates = pdfMetadata?.filterStates || {};
+    return ["excludeQuotes", "excludeBibliography", "excludeMatches"].some(
+      (key) => filterStates[key] !== null && filterStates[key] !== undefined
+    );
+  }
+
+  shouldEnforceViewerFilterValidation(expectedReportOptions = null, pdfMetadata = {}) {
+    if (!expectedReportOptions) {
+      return false;
+    }
+
+    if (!this.hasEnabledViewerFilters(expectedReportOptions)) {
+      return true;
+    }
+
+    if (this.areViewerFiltersConfirmed(expectedReportOptions)) {
+      return true;
+    }
+
+    return this.pdfHasExplicitFilterStates(pdfMetadata);
+  }
+
+  async waitForViewerSimilarityOptionsResponse({
+    context,
+    optionsUrl,
+    headers,
+    viewerPage = null,
+    timeoutMs = 8000,
+  } = {}) {
+    if (!context?.request || !optionsUrl) {
+      return null;
+    }
+
+    const deadline = Date.now() + Math.max(2000, Number(timeoutMs) || 8000);
+    while (Date.now() < deadline) {
+      const response = await context.request
+        .get(optionsUrl, {
+          headers,
+        })
+        .catch(() => null);
+      if (response?.ok()) {
+        return response;
+      }
+
+      if (viewerPage && typeof viewerPage.waitForTimeout === "function") {
+        await viewerPage.waitForTimeout(800).catch(() => null);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+    }
+
+    return null;
+  }
+
   async waitForViewerReportOptionsSync({
     context,
     viewerPage = null,
@@ -2100,13 +2224,15 @@ class TurnitinAutomation {
 
     const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 6000);
     while (Date.now() < deadline) {
-      const response = await context.request
-        .get(similarityEndpoint.optionsUrl, {
-          headers: this.buildViewerQueueHeaders({
-            referer: similarityEndpoint.viewerReferenceUrl,
-          }),
-        })
-        .catch(() => null);
+    const response = await this.waitForViewerSimilarityOptionsResponse({
+      context,
+      optionsUrl: similarityEndpoint.optionsUrl,
+      headers: this.buildViewerQueueHeaders({
+        referer: similarityEndpoint.viewerReferenceUrl,
+      }),
+      viewerPage,
+      timeoutMs,
+    });
       if (response?.ok()) {
         const data = await response.json().catch(() => ({}));
         const parsed = this.extractViewerSimilarityOptionsState(data);
@@ -3383,6 +3509,7 @@ class TurnitinAutomation {
     }
     if (
       expectedReportOptions &&
+      this.shouldEnforceViewerFilterValidation(expectedReportOptions, pdfMetadata) &&
       !this.doesPdfMatchRequestedReportOptions(pdfMetadata, expectedReportOptions)
     ) {
       await fs.unlink(pdfPath).catch(() => null);
@@ -3428,6 +3555,7 @@ class TurnitinAutomation {
     }
     if (
       expectedReportOptions &&
+      this.shouldEnforceViewerFilterValidation(expectedReportOptions, pdfMetadata) &&
       !this.doesPdfMatchRequestedReportOptions(pdfMetadata, expectedReportOptions)
     ) {
       await fs.unlink(sourcePath).catch(() => null);
