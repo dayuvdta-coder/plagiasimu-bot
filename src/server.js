@@ -271,6 +271,18 @@ async function main() {
   app.use(express.urlencoded({ extended: false }));
   app.locals.panelAuth = panelAuth;
 
+  app.get(config.pakasir.webhookPath, async (req, res) => {
+    return res.json({
+      ok: true,
+      service: "pakasir-webhook",
+      path: config.pakasir.webhookPath,
+      paymentEnabled: pakasirPaymentService.isConfigured(),
+      project: config.pakasir.project || null,
+      method: config.pakasir.method || null,
+      now: new Date().toISOString(),
+    });
+  });
+
   app.post(config.pakasir.webhookPath, async (req, res) => {
     if (!telegramBot?.isPaymentEnabled?.()) {
       return res.status(404).json({
