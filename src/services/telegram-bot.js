@@ -4,7 +4,13 @@ const path = require("path");
 const { randomUUID } = require("crypto");
 const QRCode = require("qrcode");
 const { URL } = require("url");
-const { appendAccount, listAccounts, maskEmail, removeAccount } = require("./accounts");
+const {
+  appendAccounts,
+  listAccounts,
+  maskEmail,
+  parseAccountsFromText,
+  removeAccount,
+} = require("./accounts");
 const { sanitizeResultArtifacts } = require("./report-links");
 
 function sleep(ms) {
@@ -967,19 +973,16 @@ class TelegramBotService {
     };
   }
 
-  parseAdminAccountCredentials(payload) {
-    const raw = String(payload || "").trim();
-    const [emailPart, ...passwordParts] = raw.split("|");
-    const email = String(emailPart || "").trim();
-    const password = passwordParts.join("|").trim();
-    if (!email || !password) {
+  parseAdminAccountBatch(payload) {
+    const accounts = parseAccountsFromText(String(payload || "").trim());
+    if (!accounts.length) {
       throw new Error('Format tambah akun tidak valid. Gunakan "email@example.com | password".');
     }
 
-    return {
-      email,
-      password,
-    };
+    return accounts.map((account) => ({
+      email: account.email,
+      password: account.password,
+    }));
   }
 
   parseAdminAccountEmail(payload) {
@@ -1033,16 +1036,35 @@ class TelegramBotService {
     }
 
     if (operation.action === "add") {
-      const credentials = this.parseAdminAccountCredentials(operation.payload);
-      const result = await appendAccount(this.config.accountsFile, credentials);
+      const accounts = this.parseAdminAccountBatch(operation.payload);
+      const result = await appendAccounts(this.config.accountsFile, accounts);
+      if (!result.addedAccounts.length) {
+        await this.sendMessage(
+          chatId,
+          [
+            `${TELEGRAM_BOT_LABEL} • Kelola Akun`,
+            "Tidak ada akun baru yang ditambahkan.",
+            result.skippedAccounts.length
+              ? `Semua akun sudah ada: ${result.skippedAccounts.slice(0, 5).join(", ")}`
+              : "Periksa format perintah dan coba lagi.",
+          ].join("\n")
+        );
+        return;
+      }
+
       await this.sendMessage(
         chatId,
         [
           `${TELEGRAM_BOT_LABEL} • Kelola Akun`,
-          "Akun baru berhasil ditambahkan.",
-          `Email: ${credentials.email}`,
+          `${result.addedAccounts.length} akun berhasil ditambahkan.`,
+          `Email pertama: ${result.addedAccounts[0].email}`,
+          result.skippedAccounts.length
+            ? `Duplikat dilewati: ${result.skippedAccounts.length}`
+            : null,
           `Total akun: ${result.totalAccounts}`,
-        ].join("\n")
+        ]
+          .filter(Boolean)
+          .join("\n")
       );
       return;
     }

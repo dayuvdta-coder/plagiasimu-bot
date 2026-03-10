@@ -456,7 +456,7 @@ test("TelegramBotService allows admin commands only for configured admin chats",
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test("TelegramBotService lets admin list, add, and delete pool accounts via Telegram commands", async () => {
+test("TelegramBotService lets admin list, bulk-add, and delete pool accounts via Telegram commands", async () => {
   const { dir, config } = await createConfig();
   config.telegram.allowedChatIds = ["2002"];
   config.telegram.adminChatIds = ["2002"];
@@ -515,9 +515,11 @@ test("TelegramBotService lets admin list, add, and delete pool accounts via Tele
   });
 
   await service.handleUpdate(buildMessage("/accounts list"));
-  await service.handleUpdate(buildMessage("/accounts add user2@example.com | pass2"));
+  await service.handleUpdate(
+    buildMessage("/accounts add user2@example.com\n| pass2\n\nuser3@example.com\n| pass3")
+  );
   await service.handleUpdate(buildMessage("/accountlist"));
-  await service.handleUpdate(buildMessage("/accounts del user2@example.com"));
+  await service.handleUpdate(buildMessage("/accounts del user3@example.com"));
 
   const firstPayload = requests[0]?.payload;
   const secondPayload = requests[1]?.payload;
@@ -527,13 +529,14 @@ test("TelegramBotService lets admin list, add, and delete pool accounts via Tele
 
   assert.match(firstPayload?.text || "", /Total 1 akun terdaftar\./);
   assert.match(firstPayload?.text || "", /1\. user1@example\.com/);
-  assert.match(secondPayload?.text || "", /Akun baru berhasil ditambahkan\./);
-  assert.match(secondPayload?.text || "", /Email: user2@example\.com/);
-  assert.match(thirdPayload?.text || "", /Total 2 akun terdaftar\./);
+  assert.match(secondPayload?.text || "", /2 akun berhasil ditambahkan\./);
+  assert.match(secondPayload?.text || "", /Email pertama: user2@example\.com/);
+  assert.match(thirdPayload?.text || "", /Total 3 akun terdaftar\./);
   assert.match(thirdPayload?.text || "", /2\. user2@example\.com/);
+  assert.match(thirdPayload?.text || "", /3\. user3@example\.com/);
   assert.match(fourthPayload?.text || "", /Akun berhasil dihapus dari file pool\./);
-  assert.match(fourthPayload?.text || "", /Sisa akun: 1/);
-  assert.equal(accounts, "user1@example.com | pass1\n");
+  assert.match(fourthPayload?.text || "", /Sisa akun: 2/);
+  assert.equal(accounts, "user1@example.com | pass1\nuser2@example.com | pass2\n");
 
   await fs.rm(dir, { recursive: true, force: true });
 });

@@ -490,6 +490,39 @@ test("getPoolAlertSnapshot marks warning when usable pool is low", async () => {
   assert.equal(snapshot.shouldNotifyAdmin, true);
 });
 
+test("getPoolAlertSnapshot surfaces account file parse errors clearly", async () => {
+  const service = new TurnitinService({
+    config: {
+      maxSubmissionsPerAssignment: 2,
+      maxAttemptsPerAssignment: 2,
+      poolAlerts: {
+        enabled: true,
+        usableAccountsThreshold: 2,
+        submittableAssignmentsThreshold: 6,
+      },
+    },
+    stateStore: {
+      projectAccountSummaries() {
+        return [];
+      },
+      getSelectionHints() {
+        return { classes: {} };
+      },
+    },
+  });
+
+  service.getAccounts = async () => {
+    throw new Error('Format akun tidak valid di baris 11. Gunakan "email | password".');
+  };
+
+  const snapshot = await service.getPoolAlertSnapshot();
+
+  assert.equal(snapshot.level, "critical");
+  assert.equal(snapshot.headline, "File akun gagal dibaca.");
+  assert.match(snapshot.detailText, /Format akun tidak valid di baris 11/);
+  assert.equal(snapshot.shouldNotifyAdmin, true);
+});
+
 test("scanAllAccounts uses bounded concurrency and preserves account order", async () => {
   const scanStarts = [];
   const scanFinishes = [];

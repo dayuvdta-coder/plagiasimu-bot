@@ -439,15 +439,20 @@ class TurnitinService {
     );
   }
 
-  buildPoolAlertSnapshot(accounts = []) {
+  buildPoolAlertSnapshot(accounts = [], { accountsError = null } = {}) {
     const summaries = this.buildAccountUsageSummaries(accounts);
     const totals = this.summarizePoolUsage(summaries);
     const thresholds = this.getPoolAlertThresholds();
 
     let level = "healthy";
     let headline = "Pool akun masih aman.";
+    let detailText = "";
 
-    if (!totals.accountCount) {
+    if (accountsError) {
+      level = "critical";
+      headline = "File akun gagal dibaca.";
+      detailText = `Pool akun error. ${String(accountsError.message || accountsError || "Unknown error")}`;
+    } else if (!totals.accountCount) {
       level = "critical";
       headline = "Tidak ada akun Turnitin yang terdaftar.";
     } else if (!totals.usableAccounts || !totals.submittableAssignments) {
@@ -464,10 +469,12 @@ class TurnitinService {
     }
 
     const summaryText = `${totals.usableAccounts}/${totals.accountCount} akun usable • ${totals.submittableAssignments} assignment siap • ${totals.resubmittableAssignments} slot resubmit`;
-    const detailText =
-      level === "healthy"
-        ? `Pool masih aman. ${summaryText}.`
-        : `${headline} ${summaryText}.`;
+    if (!detailText) {
+      detailText =
+        level === "healthy"
+          ? `Pool masih aman. ${summaryText}.`
+          : `${headline} ${summaryText}.`;
+    }
 
     return {
       level,
@@ -481,8 +488,14 @@ class TurnitinService {
   }
 
   async getPoolAlertSnapshot() {
-    const accounts = await this.getAccounts().catch(() => []);
-    return this.buildPoolAlertSnapshot(accounts);
+    try {
+      const accounts = await this.getAccounts();
+      return this.buildPoolAlertSnapshot(accounts);
+    } catch (error) {
+      return this.buildPoolAlertSnapshot([], {
+        accountsError: error,
+      });
+    }
   }
 
   findAssignmentInUsageSummaries(

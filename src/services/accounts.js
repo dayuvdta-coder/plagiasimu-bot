@@ -4,32 +4,75 @@ const path = require("path");
 const SIMPLE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
 
 function parseAccountsFromText(text) {
-  return text
-    .split(/\r?\n/)
-    .map((line, index) => ({
-      line: line.trim(),
-      index: index + 1,
-    }))
-    .filter((entry) => entry.line && !entry.line.startsWith("#"))
-    .map((entry) => {
-      const [emailPart, ...passwordParts] = entry.line
-        .split("|")
-        .map((part) => part.trim());
-      const email = emailPart || "";
-      const password = passwordParts.join("|").trim();
+  const rows = String(text || "").split(/\r?\n/);
+  const accounts = [];
+  let pendingEmail = null;
 
-      if (!email || !password) {
+  for (let index = 0; index < rows.length; index += 1) {
+    const sourceLine = index + 1;
+    const line = String(rows[index] || "").trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    if (pendingEmail) {
+      if (!line.startsWith("|")) {
         throw new Error(
-          `Format akun tidak valid di baris ${entry.index}. Gunakan "email | password".`
+          `Format akun tidak valid di baris ${pendingEmail.sourceLine}. Gunakan "email | password".`
         );
       }
 
-      return {
+      const password = line.slice(1).trim();
+      if (!pendingEmail.email || !password) {
+        throw new Error(
+          `Format akun tidak valid di baris ${pendingEmail.sourceLine}. Gunakan "email | password".`
+        );
+      }
+
+      accounts.push({
+        email: pendingEmail.email,
+        password,
+        sourceLine: pendingEmail.sourceLine,
+        sourceLineStart: pendingEmail.sourceLine,
+        sourceLineEnd: sourceLine,
+      });
+      pendingEmail = null;
+      continue;
+    }
+
+    const pipeIndex = line.indexOf("|");
+    if (pipeIndex >= 0) {
+      const email = line.slice(0, pipeIndex).trim();
+      const password = line.slice(pipeIndex + 1).trim();
+      if (!email || !password) {
+        throw new Error(
+          `Format akun tidak valid di baris ${sourceLine}. Gunakan "email | password".`
+        );
+      }
+
+      accounts.push({
         email,
         password,
-        sourceLine: entry.index,
-      };
-    });
+        sourceLine,
+        sourceLineStart: sourceLine,
+        sourceLineEnd: sourceLine,
+      });
+      continue;
+    }
+
+    pendingEmail = {
+      email: line,
+      sourceLine,
+    };
+  }
+
+  if (pendingEmail) {
+    throw new Error(
+      `Format akun tidak valid di baris ${pendingEmail.sourceLine}. Gunakan "email | password".`
+    );
+  }
+
+  return accounts;
 }
 
 async function readAccounts(filePath) {
@@ -102,31 +145,64 @@ function buildAccountLine({ email, password }) {
 }
 
 async function appendAccount(filePath, { email, password } = {}) {
-  const nextAccount = validateAccountInput({ email, password });
-  const file = await loadAccountsFile(filePath);
-  const duplicate = file.accounts.find(
-    (account) => normalizeAccountEmail(account.email) === normalizeAccountEmail(nextAccount.email)
-  );
-  if (duplicate) {
-    throw new Error("Akun sudah ada di file pool.");
+  const result = await appendAccounts(filePath, [{ email, password }]);
+  if (!result.addedAccounts.length) {
+    if (result.skippedAccounts.length) {
+      throw new Error("Akun sudah ada di file pool.");
+    }
+    throw new Error("Tidak ada akun baru yang ditambahkan.");
   }
 
-  const nextLine = buildAccountLine(nextAccount);
+  const [account] = result.addedAccounts;
+  return {
+    account,
+    totalAccounts: result.totalAccounts,
+  };
+}
+
+async function appendAccounts(filePath, items = []) {
+  const file = await loadAccountsFile(filePath);
+  const existingEmails = new Set(
+    file.accounts.map((account) => normalizeAccountEmail(account.email))
+  );
+  const seenBatchEmails = new Set();
+  const addedAccounts = [];
+  const skippedAccounts = [];
+
+  for (const item of items) {
+    const nextAccount = validateAccountInput(item);
+    const normalizedEmail = normalizeAccountEmail(nextAccount.email);
+    if (existingEmails.has(normalizedEmail) || seenBatchEmails.has(normalizedEmail)) {
+      skippedAccounts.push(nextAccount.email);
+      continue;
+    }
+
+    seenBatchEmails.add(normalizedEmail);
+    addedAccounts.push(nextAccount);
+  }
+
+  if (!addedAccounts.length) {
+    return {
+      addedAccounts: [],
+      skippedAccounts,
+      totalAccounts: file.accounts.length,
+    };
+  }
+
+  const appendedText = addedAccounts.map((account) => buildAccountLine(account)).join("\n");
   const nextRaw = file.raw.trim()
     ? file.raw.endsWith("\n")
-      ? `${file.raw}${nextLine}\n`
-      : `${file.raw}\n${nextLine}\n`
-    : `${nextLine}\n`;
+      ? `${file.raw}${appendedText}\n`
+      : `${file.raw}\n${appendedText}\n`
+    : `${appendedText}\n`;
 
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, nextRaw, "utf8");
 
   return {
-    account: {
-      ...nextAccount,
-      sourceLine: nextRaw.split(/\r?\n/).findIndex((line) => line === nextLine) + 1,
-    },
-    totalAccounts: file.accounts.length + 1,
+    addedAccounts,
+    skippedAccounts,
+    totalAccounts: file.accounts.length + addedAccounts.length,
   };
 }
 
@@ -153,8 +229,12 @@ async function removeAccount(filePath, email) {
   }
 
   const nextLines = [...file.lines];
-  const rawLineIndex = Math.max(0, Number(account.sourceLine || 1) - 1);
-  nextLines.splice(rawLineIndex, 1);
+  const rawLineStartIndex = Math.max(0, Number(account.sourceLineStart || account.sourceLine || 1) - 1);
+  const rawLineEndIndex = Math.max(
+    rawLineStartIndex,
+    Number(account.sourceLineEnd || account.sourceLine || 1) - 1
+  );
+  nextLines.splice(rawLineStartIndex, rawLineEndIndex - rawLineStartIndex + 1);
   let nextRaw = nextLines.join("\n");
   if (nextRaw && !nextRaw.endsWith("\n")) {
     nextRaw = `${nextRaw}\n`;
@@ -170,6 +250,7 @@ async function removeAccount(filePath, email) {
 
 module.exports = {
   appendAccount,
+  appendAccounts,
   listAccounts,
   maskEmail,
   normalizeAccountEmail,
