@@ -1,0 +1,15 @@
+node_modules/
+.env
+akun turnitin
+akun-turnitin.txt
+storage/uploads/*
+storage/reports/*
+storage/runtime/*
+storage/state.json
+!storage/uploads/.gitkeep
+!storage/reports/.gitkeep
+!storage/runtime/.gitkeep
+.vercel
+.playwright-cli/
+output/
+*.log

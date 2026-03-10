@@ -1,0 +1,22 @@
+[Unit]
+Description=Turnitin Pool Console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_GROUP__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__ENV_FILE__
+ExecStart=__NODE_BIN__ src/server.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0002
+
+[Install]
+WantedBy=multi-user.target

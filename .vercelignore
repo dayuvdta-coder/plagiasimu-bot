@@ -1,0 +1,15 @@
+.git
+node_modules
+storage
+output
+deploy
+public
+scripts
+test
+.playwright-cli
+akun turnitin
+README.md
+src/*
+!src/services/
+src/services/*
+!src/services/pakasir-payment.js

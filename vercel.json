@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "framework": null,
+  "builds": [
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/payments/pakasir/webhook",
+      "dest": "api/payments/pakasir/webhook.js"
+    }
+  ]
+}

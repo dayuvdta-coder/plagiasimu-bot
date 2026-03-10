@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plagiasimu Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="app-shell is-booting">
+    <div class="page-noise" aria-hidden="true"></div>
+
+    <div id="bootScreen" class="boot-screen" aria-live="polite">
+      <div class="boot-card">
+        <p class="eyebrow">Plagiasimu Console</p>
+        <h1>Memeriksa sesi panel.</h1>
+        <p>Frontend menyiapkan login admin dan dashboard operasional.</p>
+      </div>
+    </div>
+
+    <main id="authScreen" class="auth-screen hidden">
+      <section class="auth-copy">
+        <p class="eyebrow">Operational Access</p>
+        <h1>Dashboard operasional yang lebih tenang, rapih, dan cepat dibaca.</h1>
+        <p class="lead">
+          Satu permukaan untuk mengirim dokumen, membaca kapasitas akun, memantau queue, dan
+          membuka Current View tanpa lompat antar panel.
+        </p>
+
+        <div class="auth-highlights">
+          <article class="highlight-card">
+            <span class="highlight-kicker">Operational Layout</span>
+            <strong>Queue, slot akun, dan hasil terbaru dibaca dari hirarki yang jelas.</strong>
+            <p>Bagian atas fokus ke kesehatan sistem. Bagian tengah fokus ke kerja aktif. Bagian bawah fokus ke pool assignment.</p>
+          </article>
+          <article class="highlight-card">
+            <span class="highlight-kicker">Evidence Ready</span>
+            <strong>Hasil current view, receipt, dan status resubmit tetap dekat dengan job aktif.</strong>
+            <p>Admin bisa lihat bottleneck lebih cepat tanpa menggali satu-satu dari log panjang.</p>
+          </article>
+        </div>
+
+        <div class="feature-list">
+          <div class="feature-pill">Pool akun otomatis</div>
+          <div class="feature-pill">Queue paralel</div>
+          <div class="feature-pill">Current View capture</div>
+          <div class="feature-pill">Storage artefak lokal</div>
+        </div>
+      </section>
+
+      <section class="auth-card">
+        <div class="card-badge">Admin Login</div>
+        <h2>Masuk ke panel operasional</h2>
+        <p class="muted">
+          Session login dipakai untuk membuka dashboard, API panel, dan link artefak yang
+          terlindungi.
+        </p>
+
+        <form id="loginForm" class="auth-form">
+          <label>
+            Username
+            <input
+              id="loginUsername"
+              name="username"
+              type="text"
+              placeholder="Admin username"
+              autocomplete="username"
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              id="loginPassword"
+              name="password"
+              type="password"
+              placeholder="Admin password"
+              autocomplete="current-password"
+              required
+            />
+          </label>
+          <button id="loginButton" class="button primary button-block" type="submit">
+            Masuk ke Panel
+          </button>
+        </form>
+
+        <p id="loginError" class="auth-feedback hidden" role="alert"></p>
+
+        <div class="auth-note">
+          <strong>Catatan panel</strong>
+          <span>Gunakan kredensial admin yang dikonfigurasi di server. Setelah login berhasil, dashboard akan terbuka tanpa reload penuh.</span>
+        </div>
+      </section>
+    </main>
+
+    <div id="dashboardShell" class="dashboard-shell hidden">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="eyebrow">Plagiasimu Console</p>
+          <h1>Operasikan queue, slot assignment, dan hasil cek dari satu meja kerja.</h1>
+          <p class="topbar-copy">
+            Panel ini membaca pool akun lokal, memilih assignment yang aman dipakai, lalu
+            mengembalikan Current View, receipt, dan status similarity dalam satu alur.
+          </p>
+        </div>
+
+        <div class="topbar-side">
+          <div id="runtimeMeta" class="runtime-strip"></div>
+          <div class="session-card">
+            <div>
+              <p class="session-label">Logged in as</p>
+              <strong id="sessionBadge">-</strong>
+            </div>
+            <button id="logoutButton" class="button secondary" type="button">Logout</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="dashboard-grid">
+        <section class="panel panel-hero span-full">
+          <div class="section-head">
+            <div>
+              <h2>Operational Overview</h2>
+              <p class="muted">
+                Ringkasan queue, fokus kerja saat ini, dan kondisi kapasitas assignment yang bisa
+                dipakai.
+              </p>
+            </div>
+          </div>
+
+          <div id="runtimeAlert" class="runtime-alert hidden"></div>
+
+          <div class="overview-grid">
+            <div id="queueBoard" class="overview-card queue-board"></div>
+            <div id="focusSummary" class="overview-card focus-summary"></div>
+          </div>
+
+          <div id="healthNote" class="health-note"></div>
+        </section>
+
+        <section class="panel panel-submit span-4">
+          <div class="section-head">
+            <div>
+              <h2>New Submission</h2>
+              <p class="muted">
+                Gunakan form ini untuk batch upload. Queue akan mengikuti slot akun yang saat itu
+                masih tersedia.
+              </p>
+            </div>
+          </div>
+
+          <form id="submitForm" class="submit-form">
+            <label>
+              Submission title
+              <input
+                id="title"
+                name="title"
+                placeholder="Biarkan kosong untuk pakai nama file"
+                type="text"
+              />
+            </label>
+
+            <label>
+              File dokumen
+              <input id="document" name="document" type="file" multiple required />
+            </label>
+
+            <div class="submit-helper">
+              <p id="selectedFilesHint" class="option-note">
+                Bisa pilih banyak file sekaligus. Jika judul diisi, sistem akan memberi suffix
+                nomor otomatis untuk batch upload.
+              </p>
+            </div>
+
+            <fieldset class="form-options">
+              <legend>Filter Feedback Studio</legend>
+              <label class="option-toggle">
+                <input id="excludeQuotes" name="excludeQuotes" type="checkbox" />
+                <span>Exclude quotes</span>
+              </label>
+              <label class="option-toggle">
+                <input id="excludeBibliography" name="excludeBibliography" type="checkbox" />
+                <span>Exclude bibliography</span>
+              </label>
+              <label class="option-toggle">
+                <input id="excludeMatches" name="excludeMatches" type="checkbox" />
+                <span>Exclude matches &lt; 10 words</span>
+              </label>
+              <p class="option-note">
+                Report PDF, digital receipt, dan file asli akan diunduh otomatis ke storage lokal.
+              </p>
+            </fieldset>
+
+            <button id="submitButton" class="button primary button-block" type="submit">
+              Kirim ke Antrian
+            </button>
+          </form>
+        </section>
+
+        <section class="panel panel-job span-4">
+          <div class="section-head">
+            <div>
+              <h2>Job Inspector</h2>
+              <p class="muted">Pantau progres login, scan, upload, sampai artefak hasil.</p>
+            </div>
+          </div>
+          <div class="job-toolbar">
+            <p id="jobCopyStatus" class="copy-feedback muted">
+              Pilih job untuk menyalin log atau error.
+            </p>
+            <div class="job-actions">
+              <button id="copyLogsButton" class="button secondary" type="button" disabled>
+                Copy Logs
+              </button>
+              <button id="copyErrorButton" class="button secondary" type="button" disabled>
+                Copy Error
+              </button>
+            </div>
+          </div>
+          <div id="jobState" class="job-empty">Belum ada job aktif.</div>
+          <pre id="jobLogs" class="logs hidden"></pre>
+          <div id="jobResult" class="result hidden"></div>
+        </section>
+
+        <section class="panel panel-recent span-4">
+          <div class="section-head">
+            <div>
+              <h2>Recent Results</h2>
+              <p class="muted">
+                Klik kartu untuk pindah fokus ke job tertentu tanpa kehilangan konteks artefak
+                yang baru selesai.
+              </p>
+            </div>
+          </div>
+          <div id="recentJobs" class="cards compact"></div>
+        </section>
+
+        <section class="panel panel-accounts span-full">
+          <div class="section-head">
+            <div>
+              <h2>Assignment Pool</h2>
+              <p class="muted">Scan kelas dan assignment yang masih kosong, reusable, atau habis lokal.</p>
+            </div>
+            <button id="refreshAccounts" class="button secondary" type="button">
+              Refresh Scan
+            </button>
+          </div>
+          <div id="accountsMeta" class="stats"></div>
+          <div id="accountsGrid" class="cards"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
