@@ -14,6 +14,10 @@ const healthNote = document.getElementById("healthNote");
 const accountsGrid = document.getElementById("accountsGrid");
 const accountsMeta = document.getElementById("accountsMeta");
 const refreshAccountsButton = document.getElementById("refreshAccounts");
+const accountManagerForm = document.getElementById("accountManagerForm");
+const accountBatchInput = document.getElementById("accountBatchInput");
+const addAccountsButton = document.getElementById("addAccountsButton");
+const accountsFeedback = document.getElementById("accountsFeedback");
 const submitForm = document.getElementById("submitForm");
 const submitButton = document.getElementById("submitButton");
 const jobState = document.getElementById("jobState");
@@ -495,6 +499,21 @@ function setJobCopyFeedback(message, variant = "info") {
   }
 }
 
+function setAccountsFeedback(message = "", variant = "info") {
+  if (!accountsFeedback) {
+    return;
+  }
+
+  if (!message) {
+    accountsFeedback.textContent = "";
+    accountsFeedback.className = "panel-feedback hidden";
+    return;
+  }
+
+  accountsFeedback.textContent = message;
+  accountsFeedback.className = `panel-feedback ${variant}`;
+}
+
 function setSessionScreen(authenticated) {
   authScreen.classList.toggle("hidden", authenticated);
   dashboardShell.classList.toggle("hidden", !authenticated);
@@ -542,6 +561,7 @@ function resetDashboard() {
   }
   accountsMeta.innerHTML = "";
   accountsGrid.innerHTML = "";
+  setAccountsFeedback("");
   recentJobs.innerHTML = "";
   renderEmptyJobState("Belum ada job aktif.");
 }
@@ -769,6 +789,12 @@ function renderStats(accounts) {
   `;
 }
 
+function isQueueBusy() {
+  return (
+    Number(runtimeSnapshot?.runningJobCount) > 0 || Number(runtimeSnapshot?.queuedJobCount) > 0
+  );
+}
+
 function renderAccounts(accounts) {
   if (!accounts.length) {
     currentAccounts = [];
@@ -841,8 +867,20 @@ function renderAccounts(accounts) {
       return `
         <article class="card account-card">
           <div class="card-topline">
-            <h3>${escapeHtml(account.accountEmail)}</h3>
-            <span class="mini-badge">${escapeHtml(formatTimestamp(account.scannedAt))}</span>
+            <div class="account-heading">
+              <h3>${escapeHtml(account.accountEmail)}</h3>
+              <span class="mini-badge">${escapeHtml(formatTimestamp(account.scannedAt))}</span>
+            </div>
+            <div class="account-head-actions">
+              <button
+                class="button secondary compact account-delete-button"
+                type="button"
+                data-account-email="${escapeHtml(account.accountEmail)}"
+                ${isQueueBusy() ? "disabled" : ""}
+              >
+                Hapus
+              </button>
+            </div>
           </div>
           <div class="usage-strip">
             <span class="usage-chip availability ${escapeHtml(availability.className)}">${escapeHtml(
@@ -1089,6 +1127,13 @@ async function fetchAccounts(refresh = false, { background = false } = {}) {
     const data = await apiFetch(`/api/accounts/usage${refresh ? "?refresh=1" : ""}`);
     recentSubmissionHistory = data.recentSubmissions || recentSubmissionHistory;
     renderAccounts(data.accounts || []);
+    if (!background) {
+      if (data.accountsFileError) {
+        setAccountsFeedback(data.accountsFileError, "error");
+      } else {
+        setAccountsFeedback("");
+      }
+    }
     renderRecentJobs(currentJobs, recentSubmissionHistory);
   } catch (error) {
     if (!background && !error.authRequired) {
@@ -1098,6 +1143,7 @@ async function fetchAccounts(refresh = false, { background = false } = {}) {
           <p>${escapeHtml(error.message)}</p>
         </article>
       `;
+      setAccountsFeedback(error.message, "error");
     }
   } finally {
     if (!background) {
@@ -1230,6 +1276,92 @@ setBootState(true);
 
 refreshAccountsButton.addEventListener("click", async () => {
   await fetchAccounts(true);
+});
+
+accountManagerForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const accountsText = String(accountBatchInput.value || "").trim();
+  if (!accountsText) {
+    setAccountsFeedback("Isi akun batch dulu sebelum ditambahkan.", "error");
+    return;
+  }
+
+  setAccountsFeedback("");
+  addAccountsButton.disabled = true;
+  refreshAccountsButton.disabled = true;
+
+  try {
+    const payload = await apiFetch("/api/accounts", {
+      method: "POST",
+      body: {
+        accountsText,
+      },
+    });
+    currentAccounts = payload.accounts || [];
+    recentSubmissionHistory = payload.recentSubmissions || recentSubmissionHistory;
+    renderAccounts(currentAccounts);
+    renderRecentJobs(currentJobs, recentSubmissionHistory);
+    accountManagerForm.reset();
+
+    const mutation = payload.mutation || {};
+    const addedCount = Array.isArray(mutation.addedAccounts) ? mutation.addedAccounts.length : 0;
+    const skippedCount = Array.isArray(mutation.skippedAccounts) ? mutation.skippedAccounts.length : 0;
+    setAccountsFeedback(
+      skippedCount > 0
+        ? `${addedCount} akun ditambahkan, ${skippedCount} duplikat dilewati.`
+        : `${addedCount} akun berhasil ditambahkan ke pool.`,
+      addedCount > 0 ? "success" : "info"
+    );
+    await fetchJobs();
+  } catch (error) {
+    if (!error.authRequired) {
+      setAccountsFeedback(error.message, "error");
+    }
+  } finally {
+    addAccountsButton.disabled = false;
+    refreshAccountsButton.disabled = false;
+  }
+});
+
+accountsGrid.addEventListener("click", async (event) => {
+  const button = event.target.closest(".account-delete-button");
+  if (!button) {
+    return;
+  }
+
+  const email = String(button.dataset.accountEmail || "").trim();
+  if (!email) {
+    return;
+  }
+
+  if (!window.confirm(`Hapus akun ${email} dari file pool?`)) {
+    return;
+  }
+
+  setAccountsFeedback("");
+  button.disabled = true;
+  refreshAccountsButton.disabled = true;
+
+  try {
+    const payload = await apiFetch("/api/accounts", {
+      method: "DELETE",
+      body: {
+        email,
+      },
+    });
+    currentAccounts = payload.accounts || [];
+    recentSubmissionHistory = payload.recentSubmissions || recentSubmissionHistory;
+    renderAccounts(currentAccounts);
+    renderRecentJobs(currentJobs, recentSubmissionHistory);
+    setAccountsFeedback(`Akun ${email} berhasil dihapus dari pool.`, "success");
+    await fetchJobs();
+  } catch (error) {
+    if (!error.authRequired) {
+      setAccountsFeedback(error.message, "error");
+    }
+  } finally {
+    refreshAccountsButton.disabled = false;
+  }
 });
 
 loginForm.addEventListener("submit", async (event) => {

@@ -495,6 +495,12 @@ a {
   margin-bottom: 18px;
 }
 
+.section-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .section-head p {
   margin: 6px 0 0;
   line-height: 1.65;
@@ -676,6 +682,80 @@ a {
   margin-top: 18px;
 }
 
+.account-manager {
+  margin-top: 6px;
+  display: grid;
+  gap: 12px;
+}
+
+.account-manager-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(240px, 0.55fr);
+  gap: 14px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(248, 251, 253, 0.92), rgba(255, 255, 255, 0.9));
+}
+
+.account-manager-field {
+  display: grid;
+  gap: 10px;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.account-manager-field textarea {
+  width: 100%;
+  min-height: 156px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px 16px;
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.account-manager-field textarea:focus {
+  outline: 2px solid rgba(14, 91, 116, 0.16);
+  border-color: rgba(14, 91, 116, 0.36);
+}
+
+.account-manager-side {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.panel-feedback {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 18px;
+  font-size: 0.92rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.panel-feedback.error {
+  color: var(--bad);
+  background: rgba(178, 56, 43, 0.08);
+  border-color: rgba(178, 56, 43, 0.16);
+}
+
+.panel-feedback.info {
+  color: var(--info);
+  background: rgba(41, 95, 140, 0.08);
+  border-color: rgba(41, 95, 140, 0.16);
+}
+
+.panel-feedback.success {
+  color: var(--good);
+  background: rgba(15, 127, 74, 0.08);
+  border-color: rgba(15, 127, 74, 0.16);
+}
+
 .stat,
 .card {
   border: 1px solid var(--line);
@@ -732,12 +812,26 @@ a {
   gap: 12px;
 }
 
+.account-heading {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .mini-badge {
   padding: 8px 12px;
   background: rgba(14, 91, 116, 0.08);
   border-color: rgba(14, 91, 116, 0.12);
   font-size: 0.74rem;
   color: var(--accent-strong);
+  width: fit-content;
 }
 
 .account-card {
@@ -907,6 +1001,13 @@ a {
   border: 1px solid rgba(178, 56, 43, 0.14);
   background: rgba(178, 56, 43, 0.06);
   color: var(--bad);
+}
+
+.button.compact {
+  min-height: 38px;
+  padding: 9px 13px;
+  border-radius: 14px;
+  font-size: 0.82rem;
 }
 
 .submit-helper {
@@ -1224,5 +1325,17 @@ a {
 
   .job-actions {
     display: grid;
+  }
+
+  .account-manager-form {
+    grid-template-columns: 1fr;
+  }
+
+  .account-head-actions {
+    justify-content: stretch;
+  }
+
+  .account-head-actions .button {
+    width: 100%;
   }
 }

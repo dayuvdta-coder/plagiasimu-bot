@@ -3,6 +3,7 @@ const path = require("path");
 const express = require("express");
 const multer = require("multer");
 const config = require("./config");
+const { appendAccounts, parseAccountsFromText, removeAccount } = require("./services/accounts");
 const { StateStore } = require("./services/state-store");
 const { JobRunner, JobStore } = require("./services/job-runner");
 const {
@@ -160,6 +161,23 @@ async function sanitizeJobs(jobs = []) {
 
 async function sanitizeSubmissions(submissions = []) {
   return Promise.all((submissions || []).map((submission) => sanitizeSubmission(submission)));
+}
+
+async function buildAccountsUsageResponse({
+  turnitinService,
+  stateStore,
+  refreshed = false,
+  configuredAccounts = null,
+  accountsFileError = null,
+} = {}) {
+  return {
+    refreshed,
+    accounts: configuredAccounts
+      ? turnitinService.buildAccountUsageSummaries(configuredAccounts)
+      : turnitinService.enrichAccountSummaries(stateStore.listAccountSummaries()),
+    accountsFileError,
+    recentSubmissions: await sanitizeSubmissions(stateStore.listRecentSubmissions()),
+  };
 }
 
 function resolvePanelSession(req) {
@@ -381,26 +399,94 @@ async function main() {
         accountsFileError = error.message;
       }
 
-      return res.json({
-        refreshed: false,
-        accounts: configuredAccounts
-          ? turnitinService.buildAccountUsageSummaries(configuredAccounts)
-          : turnitinService.enrichAccountSummaries(stateStore.listAccountSummaries()),
-        accountsFileError,
-        recentSubmissions: await sanitizeSubmissions(stateStore.listRecentSubmissions()),
-      });
+      return res.json(
+        await buildAccountsUsageResponse({
+          turnitinService,
+          stateStore,
+          refreshed: false,
+          configuredAccounts,
+          accountsFileError,
+        })
+      );
     }
 
     try {
       await turnitinService.scanAllAccounts();
       const configuredAccounts = await turnitinService.getAccounts();
-      return res.json({
-        refreshed: true,
-        accounts: turnitinService.buildAccountUsageSummaries(configuredAccounts),
-        recentSubmissions: await sanitizeSubmissions(stateStore.listRecentSubmissions()),
-      });
+      return res.json(
+        await buildAccountsUsageResponse({
+          turnitinService,
+          stateStore,
+          refreshed: true,
+          configuredAccounts,
+        })
+      );
     } catch (error) {
       return res.status(500).json({
+        error: error.message,
+      });
+    }
+  });
+
+  app.post("/api/accounts", async (req, res) => {
+    const accountsText = String(req.body?.accountsText || "").trim();
+    if (!accountsText) {
+      return res.status(400).json({
+        error: "Isi akun tidak boleh kosong.",
+      });
+    }
+
+    try {
+      const accountsToAdd = parseAccountsFromText(accountsText).map((account) => ({
+        email: account.email,
+        password: account.password,
+      }));
+      const mutation = await appendAccounts(config.accountsFile, accountsToAdd);
+      const configuredAccounts = await turnitinService.getAccounts();
+      return res.json({
+        mutation,
+        ...(await buildAccountsUsageResponse({
+          turnitinService,
+          stateStore,
+          refreshed: false,
+          configuredAccounts,
+        })),
+      });
+    } catch (error) {
+      return res.status(400).json({
+        error: error.message,
+      });
+    }
+  });
+
+  app.delete("/api/accounts", async (req, res) => {
+    const email = String(req.body?.email || "").trim();
+    if (!email) {
+      return res.status(400).json({
+        error: "Email akun yang akan dihapus wajib diisi.",
+      });
+    }
+
+    if (jobRunner.isBusy()) {
+      return res.status(409).json({
+        error: "Hapus akun ditunda dulu. Queue masih berjalan atau ada job yang menunggu.",
+      });
+    }
+
+    try {
+      const mutation = await removeAccount(config.accountsFile, email);
+      const configuredAccounts = await turnitinService.getAccounts();
+      return res.json({
+        mutation,
+        ...(await buildAccountsUsageResponse({
+          turnitinService,
+          stateStore,
+          refreshed: false,
+          configuredAccounts,
+        })),
+      });
+    } catch (error) {
+      return res.status(400).json({
         error: error.message,
       });
     }
@@ -428,13 +514,14 @@ async function main() {
       }
 
       return res.json({
-        refreshed: wantsRefresh,
         limits: turnitinService.getAssignmentUsageLimits(),
-        accounts: configuredAccounts
-          ? turnitinService.buildAccountUsageSummaries(configuredAccounts)
-          : turnitinService.enrichAccountSummaries(stateStore.listAccountSummaries()),
-        accountsFileError,
-        recentSubmissions: await sanitizeSubmissions(stateStore.listRecentSubmissions()),
+        ...(await buildAccountsUsageResponse({
+          turnitinService,
+          stateStore,
+          refreshed: wantsRefresh,
+          configuredAccounts,
+          accountsFileError,
+        })),
       });
     } catch (error) {
       return res.status(500).json({

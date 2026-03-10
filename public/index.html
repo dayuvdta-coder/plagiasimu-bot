@@ -240,9 +240,34 @@
               <h2>Assignment Pool</h2>
               <p class="muted">Scan kelas dan assignment yang masih kosong, reusable, atau habis lokal.</p>
             </div>
-            <button id="refreshAccounts" class="button secondary" type="button">
-              Refresh Scan
-            </button>
+            <div class="section-head-actions">
+              <button id="refreshAccounts" class="button secondary" type="button">
+                Refresh Scan
+              </button>
+            </div>
+          </div>
+          <div class="account-manager">
+            <form id="accountManagerForm" class="account-manager-form">
+              <label class="account-manager-field">
+                Tambah akun batch
+                <textarea
+                  id="accountBatchInput"
+                  name="accountsText"
+                  rows="6"
+                  placeholder="email1@example.com | password1&#10;email2@example.com | password2"
+                ></textarea>
+              </label>
+              <div class="account-manager-side">
+                <button id="addAccountsButton" class="button primary" type="submit">
+                  Tambah ke Pool
+                </button>
+                <p class="option-note">
+                  Satu akun per baris. Format longgar `email` lalu baris berikutnya `| password`
+                  juga didukung.
+                </p>
+              </div>
+            </form>
+            <p id="accountsFeedback" class="panel-feedback hidden" role="status"></p>
           </div>
           <div id="accountsMeta" class="stats"></div>
           <div id="accountsGrid" class="cards"></div>
