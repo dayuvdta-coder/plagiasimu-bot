@@ -1445,22 +1445,8 @@ class TurnitinAutomation {
               if (requiresViewerFilterAwareDownload) {
                 await this.waitForViewerReady(viewerPage, onLog);
               }
-              appliedReportOptions = await this.applyViewerReportOptions({
-                viewerPage,
-                context,
-                reportOptions: normalizedReportOptions,
-                reportUrl,
-                onLog,
-              });
-              if (appliedReportOptions?.viewerSimilarity) {
-                currentViewSimilarity = appliedReportOptions.viewerSimilarity;
-              }
-
-              if (
-                requiresViewerFilterAwareDownload &&
-                !this.areViewerFiltersConfirmed(appliedReportOptions)
-              ) {
-                onLog("Filter viewer belum terkonfirmasi, coba sinkron ulang setelah viewer siap.");
+              const filterSyncAttempts = requiresViewerFilterAwareDownload ? 3 : 1;
+              for (let attempt = 0; attempt < filterSyncAttempts; attempt += 1) {
                 appliedReportOptions = await this.applyViewerReportOptions({
                   viewerPage,
                   context,
@@ -1470,6 +1456,19 @@ class TurnitinAutomation {
                 });
                 if (appliedReportOptions?.viewerSimilarity) {
                   currentViewSimilarity = appliedReportOptions.viewerSimilarity;
+                }
+                if (!requiresViewerFilterAwareDownload) {
+                  break;
+                }
+                if (this.areViewerFiltersConfirmed(appliedReportOptions)) {
+                  break;
+                }
+                if (attempt < filterSyncAttempts - 1) {
+                  onLog(
+                    attempt === 0
+                      ? "Filter viewer belum terkonfirmasi, coba sinkron ulang setelah viewer siap."
+                      : `Filter viewer masih belum sinkron, ulang cek lagi (${attempt + 2}/${filterSyncAttempts}).`
+                  );
                 }
               }
             }
@@ -3612,6 +3611,16 @@ class TurnitinAutomation {
     }
     if (
       expectedReportOptions &&
+      this.hasEnabledViewerFilters(expectedReportOptions) &&
+      !this.areViewerFiltersConfirmed(expectedReportOptions) &&
+      !this.pdfHasExplicitFilterStates(pdfMetadata)
+    ) {
+      await fs.unlink(pdfPath).catch(() => null);
+      onLog(`PDF ${sourceLabel} belum bisa memverifikasi filter viewer yang diminta, file diabaikan.`);
+      return null;
+    }
+    if (
+      expectedReportOptions &&
       this.shouldEnforceViewerFilterValidation(expectedReportOptions, pdfMetadata) &&
       !this.doesPdfMatchRequestedReportOptions(pdfMetadata, expectedReportOptions)
     ) {
@@ -3654,6 +3663,16 @@ class TurnitinAutomation {
     if (originalFilePath && (await areFilesByteIdentical(sourcePath, originalFilePath))) {
       await fs.unlink(sourcePath).catch(() => null);
       onLog(`PDF ${sourceLabel} identik dengan file submission asli, file diabaikan.`);
+      return null;
+    }
+    if (
+      expectedReportOptions &&
+      this.hasEnabledViewerFilters(expectedReportOptions) &&
+      !this.areViewerFiltersConfirmed(expectedReportOptions) &&
+      !this.pdfHasExplicitFilterStates(pdfMetadata)
+    ) {
+      await fs.unlink(sourcePath).catch(() => null);
+      onLog(`PDF ${sourceLabel} belum bisa memverifikasi filter viewer yang diminta, file diabaikan.`);
       return null;
     }
     if (

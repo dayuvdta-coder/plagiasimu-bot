@@ -1645,7 +1645,7 @@ test("saveValidatedViewerPdf rejects PDF when requested viewer filters are not r
   }
 });
 
-test("saveValidatedViewerPdf keeps valid report when viewer filters were not confirmed and PDF metadata has no filter state", async () => {
+test("saveValidatedViewerPdf rejects filtered report when viewer filters were not confirmed and PDF metadata has no filter state", async () => {
   const reportDir = await fs.mkdtemp(path.join(os.tmpdir(), "turnitin-viewer-pdf-"));
   const automation = new TurnitinAutomation({
     ...createAutomation().config,
@@ -1690,8 +1690,68 @@ test("saveValidatedViewerPdf keeps valid report when viewer filters were not con
       sourceLabel: "queue viewer",
     });
 
+    assert.equal(result, null);
+    await assert.rejects(fs.stat(pdfPath));
+    assert.ok(
+      logs.some((message) =>
+        message.includes("belum bisa memverifikasi filter viewer yang diminta")
+      )
+    );
+  } finally {
+    await fs.rm(reportDir, { recursive: true, force: true });
+  }
+});
+
+test("saveValidatedViewerPdf keeps valid report when filtered viewer state was confirmed upstream", async () => {
+  const reportDir = await fs.mkdtemp(path.join(os.tmpdir(), "turnitin-viewer-pdf-"));
+  const automation = new TurnitinAutomation({
+    ...createAutomation().config,
+    storage: {},
+  });
+  const logs = [];
+  const pdfPath = path.join(reportDir, "similarity-report.pdf");
+
+  automation.readTurnitinReportPdfMetadata = async () => ({
+    valid: true,
+    isPdf: true,
+    readable: true,
+    similarity: "80%",
+    filterStates: {
+      excludeQuotes: null,
+      excludeBibliography: null,
+      excludeMatches: null,
+      excludeMatchesWordCount: null,
+    },
+  });
+  automation.exportCurrentViewCopy = async () => {};
+
+  try {
+    const expectedReportOptions = {
+      excludeQuotes: true,
+      excludeBibliography: true,
+      excludeMatches: false,
+      excludeMatchesWordCount: 10,
+    };
+    Object.defineProperty(expectedReportOptions, "viewerFiltersConfirmed", {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+
+    const result = await automation.saveValidatedViewerPdf({
+      pdfPath,
+      pdfBuffer: Buffer.from("%PDF-1.4\nfake filtered response"),
+      expectedReportOptions,
+      onLog: (message) => logs.push(message),
+      sourceLabel: "queue viewer",
+    });
+
     assert.equal(result, pdfPath);
-    assert.equal(logs.some((message) => message.includes("belum mengikuti filter viewer")), false);
+    assert.equal(
+      logs.some((message) => message.includes("belum bisa memverifikasi filter viewer")),
+      false
+    );
   } finally {
     await fs.rm(reportDir, { recursive: true, force: true });
   }
