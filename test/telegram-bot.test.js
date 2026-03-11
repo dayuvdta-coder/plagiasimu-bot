@@ -15,6 +15,51 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+function createMinimalPdfBuffer(text = "Hello PDF") {
+  const streamContent = `BT\n/F1 12 Tf\n72 120 Td\n(${text}) Tj\nET\n`;
+  const lines = [
+    "%PDF-1.4",
+    "1 0 obj",
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "endobj",
+    "2 0 obj",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "endobj",
+    "3 0 obj",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>",
+    "endobj",
+    "4 0 obj",
+    `<< /Length ${Buffer.byteLength(streamContent, "utf8")} >>`,
+    "stream",
+    streamContent.trimEnd(),
+    "endstream",
+    "endobj",
+  ];
+
+  const offsets = [];
+  let body = "";
+  for (const line of lines) {
+    if (/^\d+ \d+ obj$/.test(line)) {
+      offsets.push(Buffer.byteLength(body, "utf8"));
+    }
+    body += `${line}\n`;
+  }
+
+  const xrefOffset = Buffer.byteLength(body, "utf8");
+  body += "xref\n";
+  body += `0 ${offsets.length + 1}\n`;
+  body += "0000000000 65535 f \n";
+  for (const offset of offsets) {
+    body += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  body += "trailer\n";
+  body += `<< /Size ${offsets.length + 1} /Root 1 0 R >>\n`;
+  body += "startxref\n";
+  body += `${xrefOffset}\n`;
+  body += "%%EOF\n";
+  return Buffer.from(body, "utf8");
+}
+
 async function createConfig() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "turnitin-telegram-bot-"));
   return {
@@ -2561,6 +2606,109 @@ test("TelegramBotService skips invalid filtered viewer PDF without sending an ex
   assert.equal(
     fetchCalls.filter((entry) => entry.url.endsWith("/sendMessage")).length,
     0
+  );
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService skips metadata-only current view PDF covers after delivery sanitization", async () => {
+  const { dir, config } = await createConfig();
+  const reportDir = path.join(dir, "reports", "job-cover-only");
+  await fs.mkdir(reportDir, { recursive: true });
+  await fs.writeFile(
+    path.join(reportDir, "similarity-report.pdf"),
+    createMinimalPdfBuffer(
+      [
+        "Submission date: 11-Mar-2026 01:09PM (UTC+0900)",
+        "Submission ID: 2899998058",
+        "File name: similarity-report.pdf (11.53M)",
+        "Word count: 21859",
+        "Character count: 121837",
+      ].join(" ")
+    )
+  );
+
+  const fetchCalls = [];
+  const loggerLines = [];
+  const service = new TelegramBotService({
+    config: {
+      ...config,
+      storage: {
+        ...config.storage,
+        dir,
+      },
+    },
+    jobRunner: Object.assign(new EventEmitter(), {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+    }),
+    fetchImpl: async (url, options = {}) => {
+      fetchCalls.push({
+        url,
+        method: options.method || "GET",
+      });
+
+      if (url.endsWith("/editMessageText")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 55,
+          },
+        });
+      }
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 111,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log(message) {
+        loggerLines.push(String(message));
+      },
+      error() {},
+    },
+  });
+
+  service.jobContexts.set("job-cover-only", {
+    chatId: 1001,
+    statusMessageId: 55,
+    lastStatusText: null,
+    lastVisibleLogMessage: null,
+    lastProgressUpdateAt: 0,
+  });
+
+  await service.handleJobCompleted({
+    id: "job-cover-only",
+    originalName: "paper.pdf",
+    title: "paper",
+    createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    result: {
+      similarity: "36%",
+      dashboardSimilarity: "36%",
+      finishedAt: new Date().toISOString(),
+      artifacts: {
+        viewerPdf: "/storage/reports/job-cover-only/similarity-report.pdf",
+      },
+    },
+  });
+
+  assert.equal(
+    fetchCalls.filter((entry) => entry.url.endsWith("/sendDocument")).length,
+    0
+  );
+  assert.equal(
+    loggerLines.some((line) => line.includes("viewer PDF did not pass delivery sanitization")),
+    true
   );
 
   await fs.rm(dir, { recursive: true, force: true });

@@ -339,6 +339,45 @@ test("sanitizeResultArtifacts removes local PDF when similarity report markers a
   await fs.rm(storageDir, { recursive: true, force: true });
 });
 
+test("sanitizeResultArtifacts removes metadata-only current view PDF cover pages", async () => {
+  const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "turnitin-report-links-"));
+  const reportsDir = path.join(storageDir, "reports", "job");
+  await fs.mkdir(reportsDir, { recursive: true });
+  await fs.writeFile(
+    path.join(reportsDir, "similarity-report.pdf"),
+    createMinimalPdfBuffer(
+      [
+        "ADITYA-NUGROHO-09503244013 by - Turnitin",
+        "Submission date: 11-Mar-2026 01:09PM (UTC+0900)",
+        "Submission ID: 2899998058",
+        "File name: 89ad8f97-91ad-4a20-ae7d-f64bcc55008e.pdf (11.53M)",
+        "Word count: 21859",
+        "Character count: 121837",
+      ].join(" ")
+    )
+  );
+
+  const sanitized = await sanitizeResultArtifacts(
+    {
+      dashboardSimilarity: "36%",
+      similarity: "36%",
+      studioUrl: "/storage/reports/job/similarity-report.pdf",
+      artifacts: {
+        viewerPdf: "/storage/reports/job/similarity-report.pdf",
+        viewerScreenshot: "/storage/reports/job/similarity-report.png",
+      },
+    },
+    { storageDir }
+  );
+
+  assert.equal(sanitized.artifacts.viewerPdf, undefined);
+  assert.equal(sanitized.studioUrl, "/storage/reports/job/similarity-report.png");
+  assert.equal(sanitized.currentViewSimilarity, null);
+  assert.equal(sanitized.similarity, "36%");
+
+  await fs.rm(storageDir, { recursive: true, force: true });
+});
+
 test("sanitizeResultArtifacts removes truncated local PDF fallback", async () => {
   const storageDir = await fs.mkdtemp(path.join(os.tmpdir(), "turnitin-report-links-"));
   const reportsDir = path.join(storageDir, "reports", "job");
