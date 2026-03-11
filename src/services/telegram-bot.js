@@ -857,9 +857,8 @@ class TelegramBotService {
     const paymentLines = paymentEnabled
       ? [
           "Pembayaran",
-          `Status: Aktif`,
-          `Metode: ${paymentMethod}`,
-          `Tarif: ${formatCurrencyIdr(this.pakasirConfig.amount)} per dokumen`,
+          `Mode: ${paymentMethod} otomatis`,
+          `Harga: ${formatCurrencyIdr(this.pakasirConfig.amount)} per dokumen`,
         ]
       : [
           "Pembayaran",
@@ -868,21 +867,21 @@ class TelegramBotService {
     const steps = paymentEnabled
       ? [
           "1. Kirim file sebagai document.",
-          "2. Pilih judul dan filter.",
-          "3. Selesaikan pembayaran invoice.",
-          "4. Bot akan memproses dokumen setelah pembayaran terkonfirmasi.",
+          "2. Tentukan judul dan pilih filter yang diinginkan.",
+          "3. Selesaikan pembayaran invoice yang dikirim bot.",
+          "4. Setelah pembayaran terverifikasi, dokumen akan otomatis diproses.",
         ]
       : [
           "1. Kirim file sebagai document.",
-          "2. Pilih judul dan filter.",
-          "3. Bot akan langsung memproses dokumen.",
+          "2. Tentukan judul dan pilih filter yang diinginkan.",
+          "3. Dokumen akan langsung masuk ke proses cek similarity.",
         ];
 
     return [
       `${TELEGRAM_BOT_LABEL}`,
       "",
       `Selamat datang, ${displayName}.`,
-      "Bot ini siap menerima dokumen dan memproses cek similarity dari chat ini.",
+      "Bot ini siap menerima dokumen Anda dan menjalankan pengecekan similarity langsung dari chat ini.",
       "",
       "Informasi Akun",
       `Nama: ${profile.displayName || "-"}`,
@@ -899,8 +898,8 @@ class TelegramBotService {
       ...steps,
       "",
       "Perintah Cepat",
-      "/status - cek progres terakhir",
-      "/cancel - batalkan draft, invoice pending, atau job aktif",
+      "/status - lihat progres dokumen terakhir",
+      "/cancel - batalkan draft, invoice pending, atau job yang sedang berjalan",
       ...(profile.isAdmin
         ? [
             "",
