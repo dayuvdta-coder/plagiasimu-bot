@@ -264,7 +264,8 @@ a {
 
 .auth-form input,
 .submit-form input[type="text"],
-.submit-form input[type="file"] {
+.submit-form input[type="file"],
+.submit-form select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -276,7 +277,8 @@ a {
 }
 
 .auth-form input:focus,
-.submit-form input:focus {
+.submit-form input:focus,
+.submit-form select:focus {
   outline: 2px solid rgba(14, 91, 116, 0.16);
   border-color: rgba(14, 91, 116, 0.36);
 }
@@ -1212,6 +1214,12 @@ a {
   display: grid;
   gap: 8px;
   margin-top: 14px;
+}
+
+.recent-filter {
+  margin: 10px 0 0;
+  font-size: 0.92rem;
+  line-height: 1.55;
 }
 
 .text-link,

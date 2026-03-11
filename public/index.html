@@ -173,6 +173,18 @@
 
             <fieldset class="form-options">
               <legend>Filter Feedback Studio</legend>
+              <label>
+                Preset filter
+                <select id="filterPreset" name="filterPreset">
+                  <option value="off">Tanpa Filter</option>
+                  <option value="standard">Standar</option>
+                  <option value="full">Lengkap</option>
+                  <option value="custom">Kustom</option>
+                </select>
+              </label>
+              <p id="filterPresetHint" class="option-note">
+                Tanpa Filter = off semua.
+              </p>
               <label class="option-toggle">
                 <input id="excludeQuotes" name="excludeQuotes" type="checkbox" />
                 <span>Exclude quotes</span>

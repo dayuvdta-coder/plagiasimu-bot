@@ -46,9 +46,9 @@ function buildResultDocumentFilename(originalName, fallback = "similarity-report
   return `${baseName || path.parse(fallback).name || "similarity-report"}.pdf`;
 }
 
-function buildResultDocumentCaption(originalName, similarity = null) {
+function buildResultDocumentCaption(originalName, similarity = null, filterLabel = null) {
   const label = truncate(normalizeDisplayFilename(originalName, "similarity-report.pdf"), 160);
-  return similarity ? `${label} • ${similarity}` : label;
+  return [label, similarity, filterLabel].filter(Boolean).join(" • ");
 }
 
 const TELEGRAM_BOT_LABEL = "Plagiasimu Bot";
@@ -212,6 +212,21 @@ function formatDurationRough(ms) {
   }
 
   return `sekitar ${hours} jam ${minutes} menit`;
+}
+
+function normalizeReportOptionsForDisplay(reportOptions = {}, defaultExcludeMatchesWordCount = 10) {
+  const safeReportOptions =
+    reportOptions && typeof reportOptions === "object" ? reportOptions : {};
+  const excludeMatchesWordCount = Number(safeReportOptions.excludeMatchesWordCount);
+  return {
+    excludeQuotes: Boolean(safeReportOptions.excludeQuotes),
+    excludeBibliography: Boolean(safeReportOptions.excludeBibliography),
+    excludeMatches: Boolean(safeReportOptions.excludeMatches),
+    excludeMatchesWordCount:
+      Number.isInteger(excludeMatchesWordCount) && excludeMatchesWordCount > 0
+        ? excludeMatchesWordCount
+        : defaultExcludeMatchesWordCount,
+  };
 }
 
 function humanizeLabel(value, fallback = "-") {
@@ -1974,6 +1989,54 @@ class TelegramBotService {
     };
   }
 
+  describeReportOptions(reportOptions = null, { concise = false } = {}) {
+    const normalized = normalizeReportOptionsForDisplay(
+      reportOptions || this.buildDefaultReportOptions(),
+      Number(this.config.defaultExcludeMatchesWordCount) || 10
+    );
+
+    const activeLabels = [];
+    if (normalized.excludeQuotes) {
+      activeLabels.push("exclude quotes");
+    }
+    if (normalized.excludeBibliography) {
+      activeLabels.push("exclude bibliography");
+    }
+    if (normalized.excludeMatches) {
+      activeLabels.push(`exclude matches < ${normalized.excludeMatchesWordCount} kata`);
+    }
+
+    if (!activeLabels.length) {
+      return concise ? "Tanpa Filter" : "Tanpa Filter • Off semua";
+    }
+
+    if (
+      normalized.excludeQuotes &&
+      normalized.excludeBibliography &&
+      !normalized.excludeMatches
+    ) {
+      return concise
+        ? "Standar"
+        : "Standar • Exclude quotes + exclude bibliography";
+    }
+
+    if (
+      normalized.excludeQuotes &&
+      normalized.excludeBibliography &&
+      normalized.excludeMatches
+    ) {
+      return concise
+        ? "Lengkap"
+        : `Lengkap • Exclude quotes + exclude bibliography + exclude matches < ${normalized.excludeMatchesWordCount} kata`;
+    }
+
+    return concise ? "Kustom" : `Kustom • ${humanizeLabel(activeLabels.join(" + "))}`;
+  }
+
+  buildFilterSummaryLine(reportOptions = null, { concise = false } = {}) {
+    return `Filter ${this.describeReportOptions(reportOptions, { concise })}`;
+  }
+
   resolveFilterPreset(value) {
     const normalized = String(value || "")
       .trim()
@@ -3003,22 +3066,26 @@ class TelegramBotService {
   }
 
   buildQueuedText(job, { fileName, title } = {}) {
+    const reportOptions = job?.reportOptions || job?.result?.reportOptions || this.buildDefaultReportOptions();
     return [
       ...this.buildCompactHeader(
         { ...job, originalName: fileName || job?.originalName, title: title || job?.title },
         "Menunggu",
         this.estimateProgressPercent(job)
       ),
+      this.buildFilterSummaryLine(reportOptions, { concise: true }),
       `Estimasi ${this.buildEtaLabel(job)}`,
       "Menunggu giliran proses.",
     ].join("\n");
   }
 
   buildRunningText(job, latestLog = null) {
+    const reportOptions = job?.result?.reportOptions || job?.reportOptions || this.buildDefaultReportOptions();
     const rawLatestLog =
       latestLog || (Array.isArray(job?.logs) && job.logs.length ? job.logs[job.logs.length - 1]?.message : "");
     return [
       ...this.buildCompactHeader(job, "Diproses", this.estimateProgressPercent(job, rawLatestLog)),
+      this.buildFilterSummaryLine(reportOptions, { concise: true }),
       `Estimasi ${this.buildEtaLabel(job)}`,
       "Sistem sedang memproses dokumen.",
     ].join("\n");
@@ -3029,6 +3096,7 @@ class TelegramBotService {
     return [
       ...this.buildCompactHeader(job, "Selesai", 100),
       this.buildCompletedSimilarityLine(result),
+      this.buildFilterSummaryLine(result.reportOptions || job?.reportOptions || this.buildDefaultReportOptions()),
       `Durasi ${this.buildElapsedLabel(job)}`,
     ].join("\n");
   }
@@ -3050,6 +3118,9 @@ class TelegramBotService {
   buildFailedText(job) {
     return [
       ...this.buildCompactHeader(job, "Gagal", this.estimateProgressPercent(job)),
+      this.buildFilterSummaryLine(job?.result?.reportOptions || job?.reportOptions || this.buildDefaultReportOptions(), {
+        concise: true,
+      }),
       "Proses belum berhasil. Coba ulang beberapa saat lagi.",
     ].join("\n");
   }
@@ -3057,6 +3128,9 @@ class TelegramBotService {
   buildCancelledText(job) {
     return [
       ...this.buildCompactHeader(job, "Batal", this.estimateProgressPercent(job)),
+      this.buildFilterSummaryLine(job?.result?.reportOptions || job?.reportOptions || this.buildDefaultReportOptions(), {
+        concise: true,
+      }),
       "Proses dihentikan.",
     ].join("\n");
   }
@@ -3418,13 +3492,20 @@ class TelegramBotService {
     const result = job?.result || {};
     const artifacts = result?.artifacts || {};
     const originalName = job?.originalName || result?.originalName || null;
+    const filterLabel = this.describeReportOptions(result.reportOptions || job?.reportOptions, {
+      concise: true,
+    });
     const candidates = [
       {
         key: "viewerPdf",
         label: "current view PDF",
         method: "sendDocument",
         filename: buildResultDocumentFilename(originalName),
-        caption: buildResultDocumentCaption(originalName, result.similarity || null),
+        caption: buildResultDocumentCaption(
+          originalName,
+          result.similarity || result.dashboardSimilarity || null,
+          filterLabel
+        ),
       },
     ];
 

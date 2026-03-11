@@ -2273,6 +2273,12 @@ test("TelegramBotService edits status and sends result artifacts when a job comp
     logs: [],
     result: {
       similarity: "15%",
+      reportOptions: {
+        excludeQuotes: true,
+        excludeBibliography: true,
+        excludeMatches: false,
+        excludeMatchesWordCount: 10,
+      },
       className: "Class A",
       assignmentName: "Assignment B",
       artifacts: {
@@ -2324,7 +2330,7 @@ test("TelegramBotService edits status and sends result artifacts when a job comp
   assert.match(sendDocumentPayloads[0]?.body || "", /filename="paper revisi final\.pdf"/);
   assert.match(
     sendDocumentPayloads[0]?.body || "",
-    /name="caption"\r\n\r\npaper revisi final\.docx • 15%/
+    /name="caption"\r\n\r\npaper revisi final\.docx • 15% • Standar/
   );
 
   await fs.rm(dir, { recursive: true, force: true });
@@ -2843,6 +2849,12 @@ test("TelegramBotService uses ETA and generic public status text", async () => {
     id: "job-eta-1",
     status: "running",
     originalName: "paper.pdf",
+    reportOptions: {
+      excludeQuotes: true,
+      excludeBibliography: true,
+      excludeMatches: false,
+      excludeMatchesWordCount: 10,
+    },
     createdAt: new Date(Date.now() - 60 * 1000).toISOString(),
     logs: [
       {
@@ -2855,6 +2867,12 @@ test("TelegramBotService uses ETA and generic public status text", async () => {
     id: "job-eta-2",
     status: "queued",
     originalName: "paper.pdf",
+    reportOptions: {
+      excludeQuotes: false,
+      excludeBibliography: false,
+      excludeMatches: false,
+      excludeMatchesWordCount: 10,
+    },
     queuePosition: 2,
     createdAt: new Date().toISOString(),
   };
@@ -2865,6 +2883,12 @@ test("TelegramBotService uses ETA and generic public status text", async () => {
     createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
     result: {
       similarity: "12%",
+      reportOptions: {
+        excludeQuotes: true,
+        excludeBibliography: true,
+        excludeMatches: true,
+        excludeMatchesWordCount: 10,
+      },
       finishedAt: new Date().toISOString(),
     },
   };
@@ -2882,17 +2906,24 @@ test("TelegramBotService uses ETA and generic public status text", async () => {
   });
 
   assert.match(queuedText, /^Plagiasimu Bot$/m);
+  assert.match(queuedText, /Filter Tanpa Filter/);
   assert.match(queuedText, /Estimasi /);
   assert.match(queuedText, /Menunggu giliran proses\./);
   assert.match(runningText, /^Plagiasimu Bot$/m);
+  assert.match(runningText, /Filter Standar/);
   assert.match(runningText, /Estimasi /);
   assert.match(runningText, /Sistem sedang memproses dokumen\./);
   assert.doesNotMatch(runningText, /Cek kelas/);
   assert.doesNotMatch(runningText, /Validasi tujuan/);
   assert.match(completedText, /^Plagiasimu Bot$/m);
   assert.match(completedText, /Similarity 12%/);
+  assert.match(
+    completedText,
+    /Filter Lengkap • Exclude quotes \+ exclude bibliography \+ exclude matches < 10 kata/
+  );
   assert.match(completedText, /Durasi /);
   assert.match(failedText, /^Plagiasimu Bot$/m);
+  assert.match(failedText, /Filter Tanpa Filter/);
   assert.match(failedText, /Proses belum berhasil\. Coba ulang beberapa saat lagi\./);
 
   await fs.rm(dir, { recursive: true, force: true });
@@ -2939,6 +2970,7 @@ test("TelegramBotService buildCompletedText shows dashboard similarity fallback 
   });
 
   assert.match(completedText, /Similarity 80% \(dashboard\)/);
+  assert.match(completedText, /Filter Standar • Exclude quotes \+ exclude bibliography/);
 
   await fs.rm(dir, { recursive: true, force: true });
 });

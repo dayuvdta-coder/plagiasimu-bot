@@ -20,6 +20,11 @@ const addAccountsButton = document.getElementById("addAccountsButton");
 const accountsFeedback = document.getElementById("accountsFeedback");
 const submitForm = document.getElementById("submitForm");
 const submitButton = document.getElementById("submitButton");
+const filterPreset = document.getElementById("filterPreset");
+const filterPresetHint = document.getElementById("filterPresetHint");
+const excludeQuotesInput = document.getElementById("excludeQuotes");
+const excludeBibliographyInput = document.getElementById("excludeBibliography");
+const excludeMatchesInput = document.getElementById("excludeMatches");
 const jobState = document.getElementById("jobState");
 const jobCopyStatus = document.getElementById("jobCopyStatus");
 const copyLogsButton = document.getElementById("copyLogsButton");
@@ -80,6 +85,78 @@ function formatTimestamp(value) {
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeReportOptions(options = {}, defaultExcludeMatchesWordCount = 10) {
+  const safeOptions = options && typeof options === "object" ? options : {};
+  const excludeMatchesWordCount = Number(safeOptions.excludeMatchesWordCount);
+  return {
+    excludeQuotes: Boolean(safeOptions.excludeQuotes),
+    excludeBibliography: Boolean(safeOptions.excludeBibliography),
+    excludeMatches: Boolean(safeOptions.excludeMatches),
+    excludeMatchesWordCount:
+      Number.isInteger(excludeMatchesWordCount) && excludeMatchesWordCount > 0
+        ? excludeMatchesWordCount
+        : defaultExcludeMatchesWordCount,
+  };
+}
+
+function getReportPresetMeta(options = {}, defaultExcludeMatchesWordCount = 10) {
+  const normalized = normalizeReportOptions(options, defaultExcludeMatchesWordCount);
+  const details = [];
+  if (normalized.excludeQuotes) {
+    details.push("Exclude quotes");
+  }
+  if (normalized.excludeBibliography) {
+    details.push("Exclude bibliography");
+  }
+  if (normalized.excludeMatches) {
+    details.push(`Exclude matches < ${normalized.excludeMatchesWordCount} kata`);
+  }
+
+  if (!details.length) {
+    return {
+      key: "off",
+      label: "Tanpa Filter",
+      detail: "Off semua",
+      summary: "Tanpa Filter • Off semua",
+    };
+  }
+
+  if (
+    normalized.excludeQuotes &&
+    normalized.excludeBibliography &&
+    !normalized.excludeMatches
+  ) {
+    return {
+      key: "standard",
+      label: "Standar",
+      detail: "Exclude quotes + exclude bibliography",
+      summary: "Standar • Exclude quotes + exclude bibliography",
+    };
+  }
+
+  if (
+    normalized.excludeQuotes &&
+    normalized.excludeBibliography &&
+    normalized.excludeMatches
+  ) {
+    const detail = `Exclude quotes + exclude bibliography + exclude matches < ${normalized.excludeMatchesWordCount} kata`;
+    return {
+      key: "full",
+      label: "Lengkap",
+      detail,
+      summary: `Lengkap • ${detail}`,
+    };
+  }
+
+  const detail = details.join(" + ");
+  return {
+    key: "custom",
+    label: "Kustom",
+    detail,
+    summary: `Kustom • ${detail}`,
+  };
 }
 
 function getAccountUsageTotals(account = {}) {
@@ -363,18 +440,54 @@ function getJobErrorText(job) {
 }
 
 function renderReportOptions(options = {}) {
-  const labels = [];
-  if (options.excludeQuotes) {
-    labels.push("Exclude quotes");
+  return getReportPresetMeta(options).summary;
+}
+
+function readSubmitFormReportOptions() {
+  return {
+    excludeQuotes: Boolean(excludeQuotesInput?.checked),
+    excludeBibliography: Boolean(excludeBibliographyInput?.checked),
+    excludeMatches: Boolean(excludeMatchesInput?.checked),
+    excludeMatchesWordCount: 10,
+  };
+}
+
+function syncFilterPresetControls() {
+  const preset = getReportPresetMeta(readSubmitFormReportOptions());
+  if (filterPreset) {
+    filterPreset.value = preset.key;
   }
-  if (options.excludeBibliography) {
-    labels.push("Exclude bibliography");
+  if (filterPresetHint) {
+    filterPresetHint.textContent = `${preset.label} = ${preset.detail}.`;
   }
-  if (options.excludeMatches) {
-    labels.push(`Exclude matches < ${Number(options.excludeMatchesWordCount) || 10} words`);
+}
+
+function applyFilterPresetSelection(presetKey) {
+  if (!excludeQuotesInput || !excludeBibliographyInput || !excludeMatchesInput) {
+    return;
   }
 
-  return labels.length ? labels.join(" • ") : "Default viewer filters";
+  switch (String(presetKey || "").trim().toLowerCase()) {
+    case "off":
+      excludeQuotesInput.checked = false;
+      excludeBibliographyInput.checked = false;
+      excludeMatchesInput.checked = false;
+      break;
+    case "standard":
+      excludeQuotesInput.checked = true;
+      excludeBibliographyInput.checked = true;
+      excludeMatchesInput.checked = false;
+      break;
+    case "full":
+      excludeQuotesInput.checked = true;
+      excludeBibliographyInput.checked = true;
+      excludeMatchesInput.checked = true;
+      break;
+    default:
+      break;
+  }
+
+  syncFilterPresetControls();
 }
 
 function getFocusedJobSummary() {
@@ -425,6 +538,7 @@ function renderOperationalHero() {
       focusedJob.result?.dashboardSimilarity ||
       focusedJob.result?.similarity ||
       "-";
+    const focusedReportOptions = focusedJob.result?.reportOptions || focusedJob.reportOptions || {};
 
     focusSummary.innerHTML = `
       <div class="overview-card-topline">
@@ -439,6 +553,7 @@ function renderOperationalHero() {
       )}</div>
       <div class="overview-list">
         <div><span>Similarity</span><strong>${escapeHtml(focusedSimilarity)}</strong></div>
+        <div><span>Filter</span><strong>${escapeHtml(getReportPresetMeta(focusedReportOptions).label)}</strong></div>
         <div><span>Updated</span><strong>${escapeHtml(
           formatTimestamp(
             focusedJob.updatedAt || focusedJob.result?.finishedAt || focusedJob.createdAt || null
@@ -447,7 +562,9 @@ function renderOperationalHero() {
       </div>
       <div class="overview-footnote">${
         focusedJob.result?.assignmentName
-          ? `Assignment: ${escapeHtml(focusedJob.result.assignmentName)}`
+          ? `Assignment: ${escapeHtml(focusedJob.result.assignmentName)} • ${escapeHtml(
+              renderReportOptions(focusedReportOptions)
+            )}`
           : `Job ID: ${escapeHtml(focusedJob.id || "-")}`
       }</div>
     `;
@@ -944,6 +1061,7 @@ function normalizeRecentJobEntries(jobs = [], submissions = []) {
       status: job.status || result.similarityStatus || "-",
       timestamp: job.updatedAt || job.createdAt || result.finishedAt || "-",
       similarity: result.similarity || result.dashboardSimilarity || null,
+      reportOptions: result.reportOptions || job.reportOptions || null,
       currentViewUrl: resolveCurrentViewPdfUrl(result),
       receiptUrl: artifacts.digitalReceipt || "",
       originalFileUrl: artifacts.originalFile || "",
@@ -966,6 +1084,7 @@ function normalizeRecentJobEntries(jobs = [], submissions = []) {
       timestamp: submission.finishedAt || "-",
       similarity:
         submission.currentViewSimilarity || submission.dashboardSimilarity || submission.similarity || null,
+      reportOptions: submission.reportOptions || null,
       currentViewUrl: resolveCurrentViewPdfUrl(submission),
       receiptUrl: artifacts.digitalReceipt || "",
       originalFileUrl: artifacts.originalFile || "",
@@ -1002,6 +1121,7 @@ function renderRecentJobs(jobs = [], submissions = []) {
             <span>${escapeHtml(formatTimestamp(job.timestamp))}</span>
             <strong>${escapeHtml(job.similarity || "-")}</strong>
           </div>
+          <p class="recent-filter muted">${escapeHtml(renderReportOptions(job.reportOptions || {}))}</p>
           <div class="recent-links">
             ${
               job.currentViewUrl
@@ -1416,6 +1536,26 @@ logoutButton.addEventListener("click", async () => {
   }
 });
 
+if (filterPreset) {
+  filterPreset.addEventListener("change", () => {
+    if (filterPreset.value === "custom") {
+      syncFilterPresetControls();
+      return;
+    }
+    applyFilterPresetSelection(filterPreset.value);
+  });
+}
+
+[excludeQuotesInput, excludeBibliographyInput, excludeMatchesInput]
+  .filter(Boolean)
+  .forEach((input) => {
+    input.addEventListener("change", () => {
+      syncFilterPresetControls();
+    });
+  });
+
+syncFilterPresetControls();
+
 submitForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
@@ -1454,6 +1594,7 @@ submitForm.addEventListener("submit", async (event) => {
       renderJob(queuedJobs[0]);
     }
     submitForm.reset();
+    syncFilterPresetControls();
     clearInterval(pollTimer);
     pollTimer = null;
     await fetchJobs();
