@@ -85,6 +85,37 @@ function normalizeReportText(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+function getTurnitinTextMarkers(text) {
+  const normalized = normalizeReportText(text);
+  const classicMarkers = [
+    /originality report/i,
+    /similarity index/i,
+    /primary sources/i,
+    /submission id:/i,
+    /exclude quotes/i,
+    /exclude bibliography/i,
+  ];
+  const coverPageMarkers = [
+    /submission date:/i,
+    /submission id:/i,
+    /file name:/i,
+    /word count:/i,
+    /character count:/i,
+  ];
+
+  return {
+    normalized,
+    classicMarkerHits: classicMarkers.filter((pattern) => pattern.test(normalized)).length,
+    coverPageHits: coverPageMarkers.filter((pattern) => pattern.test(normalized)).length,
+  };
+}
+
+function hasExplicitTurnitinFilterStates(filterStates = {}) {
+  return ["excludeQuotes", "excludeBibliography", "excludeMatches"].some(
+    (key) => filterStates[key] !== null && filterStates[key] !== undefined
+  );
+}
+
 function pickStudioUrl({ reportUrl = null, artifacts = {} } = {}) {
   return artifacts.viewerPdf || artifacts.viewerScreenshot || reportUrl || null;
 }
@@ -118,33 +149,33 @@ function isLikelyViewerUrl(value) {
 }
 
 function looksLikeTurnitinReportText(text) {
-  const normalized = normalizeReportText(text);
+  const { normalized, classicMarkerHits, coverPageHits } = getTurnitinTextMarkers(text);
+  if (!normalized) {
+    return false;
+  }
+  if (classicMarkerHits >= 2) {
+    return true;
+  }
+  return /submission id:/i.test(normalized) && coverPageHits >= 4;
+}
+
+function isIncompleteTurnitinReportText(text) {
+  const { normalized, classicMarkerHits, coverPageHits } = getTurnitinTextMarkers(text);
   if (!normalized) {
     return false;
   }
 
-  const classicMarkers = [
-    /originality report/i,
-    /similarity index/i,
-    /primary sources/i,
-    /submission id:/i,
-    /exclude quotes/i,
-    /exclude bibliography/i,
-  ];
-  const classicMarkerHits = classicMarkers.filter((pattern) => pattern.test(normalized)).length;
-  if (classicMarkerHits >= 2) {
-    return true;
+  const metadataOnlyCover =
+    /submission id:/i.test(normalized) &&
+    coverPageHits >= 4 &&
+    classicMarkerHits < 2;
+  if (!metadataOnlyCover) {
+    return false;
   }
 
-  const coverPageMarkers = [
-    /submission date:/i,
-    /submission id:/i,
-    /file name:/i,
-    /word count:/i,
-    /character count:/i,
-  ];
-  const coverPageHits = coverPageMarkers.filter((pattern) => pattern.test(normalized)).length;
-  return /submission id:/i.test(normalized) && coverPageHits >= 4;
+  const similarity = extractTurnitinReportSimilarityFromText(normalized);
+  const filterStates = extractTurnitinReportFilterStatesFromText(normalized);
+  return !similarity && !hasExplicitTurnitinFilterStates(filterStates);
 }
 
 function extractTurnitinReportSimilarityFromText(text) {
@@ -379,6 +410,16 @@ async function readTurnitinReportPdfMetadata(filePath) {
     valid = looksLikeTurnitinReportText(stdout);
     similarity = valid ? extractTurnitinReportSimilarityFromText(stdout) : null;
     filterStates = valid ? extractTurnitinReportFilterStatesFromText(stdout) : filterStates;
+    if (valid && isIncompleteTurnitinReportText(stdout)) {
+      valid = false;
+      similarity = null;
+      filterStates = {
+        excludeQuotes: null,
+        excludeBibliography: null,
+        excludeMatches: null,
+        excludeMatchesWordCount: null,
+      };
+    }
   } catch (error) {
     valid = error.code === "ENOENT";
     similarity = null;
@@ -529,6 +570,7 @@ module.exports = {
   extractTurnitinReportFilterStatesFromText,
   extractTurnitinReportSimilarityFromText,
   hasCurrentViewPdf,
+  isIncompleteTurnitinReportText,
   isLikelyViewerUrl,
   isLocalStoragePdfUrl,
   looksLikeTurnitinReportText,

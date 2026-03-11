@@ -8,6 +8,7 @@ const {
   extractTurnitinReportFilterStatesFromText,
   extractTurnitinReportSimilarityFromText,
   hasCurrentViewPdf,
+  isIncompleteTurnitinReportText,
   isLikelyViewerUrl,
   looksLikeTurnitinReportText,
   pickCurrentViewUrl,
@@ -155,6 +156,42 @@ test("looksLikeTurnitinReportText recognizes metadata-only viewer cover pages", 
       Character count: 153253
     `),
     true
+  );
+});
+
+test("isIncompleteTurnitinReportText flags metadata-only cover without similarity signals", () => {
+  assert.equal(
+    isIncompleteTurnitinReportText(`
+      ADITYA-NUGROHO-09503244013 by - Turnitin
+      Submission date: 11-Mar-2026 01:09PM (UTC+0900)
+      Submission ID: 2899998058
+      File name: 89ad8f97-91ad-4a20-ae7d-f64bcc55008e.pdf (11.53M)
+      Word count: 21859
+      Character count: 121837
+    `),
+    true
+  );
+});
+
+test("isIncompleteTurnitinReportText ignores full reports that expose similarity signals", () => {
+  assert.equal(
+    isIncompleteTurnitinReportText(`
+      cekindong
+      by Dimas Pratama
+      Submission date: 10-Mar-2026 12:38AM (UTC+0900)
+      Submission ID: 2897268420
+      File name: 815e18ed-0682-425c-a677-f66b85b74ce5.pdf (11.53M)
+      Word count: 21859
+      Character count: 121837
+      ORIGINALITY REPORT
+      100
+      %
+      SIMILARITY INDEX
+      Exclude quotes Off
+      Exclude bibliography Off
+      Exclude matches Off
+    `),
+    false
   );
 });
 
