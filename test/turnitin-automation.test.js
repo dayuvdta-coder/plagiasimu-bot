@@ -1092,6 +1092,76 @@ test("applyViewerReportOptions captures filtered similarity from viewer options 
   assert.equal(putHeaders?.["content-type"], "application/json");
 });
 
+test("applyViewerReportOptions confirms off preset through viewer options API", async () => {
+  const automation = createAutomation();
+  let getCallCount = 0;
+  let lastPutPayload = null;
+
+  const result = await automation.applyViewerReportOptions({
+    viewerPage: {
+      url: () => "https://ev.turnitin.com/app/carta/en_us/?o=123&lang=en_us",
+      waitForTimeout: async () => {},
+    },
+    context: {
+      request: {
+        get: async () => {
+          getCallCount += 1;
+          return {
+            ok: () => true,
+            json: async () => ({
+              OriginalityOptions: [
+                {
+                  exclude_quotes: getCallCount > 1 ? 0 : 1,
+                  exclude_biblio: getCallCount > 1 ? 0 : 1,
+                  exclude_small_matches: getCallCount > 1 ? 0 : 10,
+                },
+              ],
+              ...(getCallCount > 1
+                ? {
+                    report: {
+                      overlap: 36,
+                    },
+                  }
+                : {}),
+            }),
+          };
+        },
+        put: async (_url, options = {}) => {
+          lastPutPayload = options.data || null;
+          return {
+            ok: () => true,
+            json: async () => ({
+              report: {
+                overlap: 36,
+              },
+            }),
+          };
+        },
+      },
+    },
+    reportOptions: {
+      excludeQuotes: false,
+      excludeBibliography: false,
+      excludeMatches: false,
+      excludeMatchesWordCount: 10,
+    },
+    reportUrl: "https://ev.turnitin.com/app/carta/en_us/?o=123&lang=en_us",
+    onLog() {},
+  });
+
+  assert.equal(getCallCount >= 2, true);
+  assert.deepEqual(lastPutPayload, {
+    exclude_quotes: 0,
+    exclude_biblio: 0,
+    exclude_small_matches: 0,
+  });
+  assert.equal(result.excludeQuotes, false);
+  assert.equal(result.excludeBibliography, false);
+  assert.equal(result.excludeMatches, false);
+  assert.equal(result.viewerSimilarity, "36%");
+  assert.equal(result.viewerFiltersConfirmed, true);
+});
+
 test("applyViewerReportOptions falls back to browser-context fetch when APIRequestContext fails", async () => {
   const automation = createAutomation();
   let getCallCount = 0;
@@ -1685,6 +1755,63 @@ test("saveValidatedViewerPdf rejects filtered report when viewer filters were no
     const result = await automation.saveValidatedViewerPdf({
       pdfPath,
       pdfBuffer: Buffer.from("%PDF-1.4\nfake filtered response"),
+      expectedReportOptions,
+      onLog: (message) => logs.push(message),
+      sourceLabel: "queue viewer",
+    });
+
+    assert.equal(result, null);
+    await assert.rejects(fs.stat(pdfPath));
+    assert.ok(
+      logs.some((message) =>
+        message.includes("belum bisa memverifikasi filter viewer yang diminta")
+      )
+    );
+  } finally {
+    await fs.rm(reportDir, { recursive: true, force: true });
+  }
+});
+
+test("saveValidatedViewerPdf rejects off report when viewer state was not confirmed and PDF metadata has no filter state", async () => {
+  const reportDir = await fs.mkdtemp(path.join(os.tmpdir(), "turnitin-viewer-pdf-"));
+  const automation = new TurnitinAutomation({
+    ...createAutomation().config,
+    storage: {},
+  });
+  const logs = [];
+  const pdfPath = path.join(reportDir, "similarity-report.pdf");
+
+  automation.readTurnitinReportPdfMetadata = async () => ({
+    valid: true,
+    isPdf: true,
+    readable: true,
+    similarity: "36%",
+    filterStates: {
+      excludeQuotes: null,
+      excludeBibliography: null,
+      excludeMatches: null,
+      excludeMatchesWordCount: null,
+    },
+  });
+  automation.exportCurrentViewCopy = async () => {};
+
+  try {
+    const expectedReportOptions = {
+      excludeQuotes: false,
+      excludeBibliography: false,
+      excludeMatches: false,
+      excludeMatchesWordCount: 10,
+    };
+    Object.defineProperty(expectedReportOptions, "viewerFiltersConfirmed", {
+      value: false,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+
+    const result = await automation.saveValidatedViewerPdf({
+      pdfPath,
+      pdfBuffer: Buffer.from("%PDF-1.4\nfake off response"),
       expectedReportOptions,
       onLog: (message) => logs.push(message),
       sourceLabel: "queue viewer",

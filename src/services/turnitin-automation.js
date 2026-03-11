@@ -1350,6 +1350,7 @@ class TurnitinAutomation {
     const requiresViewerFilterAwareDownload = this.hasEnabledViewerFilters(
       normalizedReportOptions
     );
+    const requiresViewerOptionSync = this.hasExplicitViewerReportOptions(reportOptions);
     let appliedReportOptions = normalizedReportOptions;
     const originalFilePath = artifacts.originalFile
       ? path.join(reportDir, path.basename(artifacts.originalFile))
@@ -1371,6 +1372,8 @@ class TurnitinAutomation {
       if (
         existingViewerPdfMatchesOriginal ||
         !existingViewerPdfMetadata?.valid ||
+        (requiresViewerOptionSync &&
+          !this.pdfHasExplicitFilterStates(existingViewerPdfMetadata)) ||
         !this.doesPdfMatchRequestedReportOptions(
           existingViewerPdfMetadata,
           normalizedReportOptions
@@ -1442,10 +1445,10 @@ class TurnitinAutomation {
             });
 
             if (viewerBootstrapReady) {
-              if (requiresViewerFilterAwareDownload) {
+              if (requiresViewerOptionSync || requiresViewerFilterAwareDownload) {
                 await this.waitForViewerReady(viewerPage, onLog);
               }
-              const filterSyncAttempts = requiresViewerFilterAwareDownload ? 3 : 1;
+              const filterSyncAttempts = requiresViewerOptionSync ? 3 : 1;
               for (let attempt = 0; attempt < filterSyncAttempts; attempt += 1) {
                 appliedReportOptions = await this.applyViewerReportOptions({
                   viewerPage,
@@ -1457,7 +1460,7 @@ class TurnitinAutomation {
                 if (appliedReportOptions?.viewerSimilarity) {
                   currentViewSimilarity = appliedReportOptions.viewerSimilarity;
                 }
-                if (!requiresViewerFilterAwareDownload) {
+                if (!requiresViewerOptionSync) {
                   break;
                 }
                 if (this.areViewerFiltersConfirmed(appliedReportOptions)) {
@@ -1585,6 +1588,16 @@ class TurnitinAutomation {
     };
   }
 
+  hasExplicitViewerReportOptions(reportOptions = null) {
+    return Boolean(
+      reportOptions &&
+        typeof reportOptions === "object" &&
+        ["excludeQuotes", "excludeBibliography", "excludeMatches", "excludeMatchesWordCount"].some(
+          (key) => Object.prototype.hasOwnProperty.call(reportOptions, key)
+        )
+    );
+  }
+
   hasEnabledViewerFilters(reportOptions = {}) {
     const normalized = this.normalizeReportOptions(reportOptions);
     return (
@@ -1607,6 +1620,11 @@ class TurnitinAutomation {
       enabledFilters.push(`exclude matches < ${normalized.excludeMatchesWordCount} words`);
     }
     return enabledFilters;
+  }
+
+  describeRequestedViewerFilters(reportOptions = {}) {
+    const enabledFilters = this.listEnabledViewerFilters(reportOptions);
+    return enabledFilters.length ? enabledFilters.join(", ") : "tanpa filter";
   }
 
   doesPdfMatchRequestedReportOptions(pdfMetadata = {}, reportOptions = {}) {
@@ -1903,18 +1921,12 @@ class TurnitinAutomation {
     onLog = noop,
   }) {
     const normalized = this.normalizeReportOptions(reportOptions);
-    if (
-      !normalized.excludeQuotes &&
-      !normalized.excludeBibliography &&
-      !normalized.excludeMatches
-    ) {
-      return normalized;
-    }
-
     const similarityEndpoint = this.buildViewerSimilarityOptionsUrl({ viewerPage, reportUrl });
     if (!similarityEndpoint) {
       onLog("URL viewer final tidak ditemukan, filter viewer dilewati.");
-      return normalized;
+      return this.attachViewerProcessingMetadata(normalized, {
+        viewerFiltersConfirmed: false,
+      });
     }
 
     const { optionsUrl } = similarityEndpoint;
@@ -2004,11 +2016,7 @@ class TurnitinAutomation {
       });
     }
 
-    const enabledFilters = this.listEnabledViewerFilters(normalized);
-
-    onLog(
-      `Menerapkan filter viewer ${enabledFilters.join(", ")}.`
-    );
+    onLog(`Menerapkan filter viewer ${this.describeRequestedViewerFilters(normalized)}.`);
     let updateResponse = await context?.request
       ?.put(optionsUrl, {
         data: nextOptions,
@@ -2283,10 +2291,7 @@ class TurnitinAutomation {
     }
 
     const normalized = this.normalizeReportOptions(reportOptions);
-    const enabledFilters = this.listEnabledViewerFilters(normalized);
-    if (!enabledFilters.length) {
-      return true;
-    }
+    const filterSummary = this.describeRequestedViewerFilters(normalized);
 
     let filterButton = viewerPage.locator('[title="Filters and Settings"]').first();
     if (!(await filterButton.count().catch(() => 0))) {
@@ -2344,7 +2349,7 @@ class TurnitinAutomation {
     }
 
     if (hasChanges) {
-      onLog(`Menerapkan filter viewer ${enabledFilters.join(", ")}.`);
+      onLog(`Menerapkan filter viewer ${filterSummary}.`);
       let applyButton = viewerPage.getByText(/^Apply Changes$/i).first();
       if (!(await applyButton.count().catch(() => 0))) {
         applyButton = viewerPage.locator("button").filter({ hasText: /^Apply Changes$/i }).first();
@@ -3611,7 +3616,6 @@ class TurnitinAutomation {
     }
     if (
       expectedReportOptions &&
-      this.hasEnabledViewerFilters(expectedReportOptions) &&
       !this.areViewerFiltersConfirmed(expectedReportOptions) &&
       !this.pdfHasExplicitFilterStates(pdfMetadata)
     ) {
@@ -3667,7 +3671,6 @@ class TurnitinAutomation {
     }
     if (
       expectedReportOptions &&
-      this.hasEnabledViewerFilters(expectedReportOptions) &&
       !this.areViewerFiltersConfirmed(expectedReportOptions) &&
       !this.pdfHasExplicitFilterStates(pdfMetadata)
     ) {
