@@ -2010,13 +2010,27 @@ class TurnitinAutomation {
     onLog(
       `Menerapkan filter viewer ${enabledFilters.join(", ")}.`
     );
-    const updateResponse = await context.request.put(optionsUrl, {
-      data: nextOptions,
-      headers: {
-        ...requestHeaders,
-        "content-type": "application/json",
-      },
-    }).catch(() => null);
+    let updateResponse = await context?.request
+      ?.put(optionsUrl, {
+        data: nextOptions,
+        headers: {
+          ...requestHeaders,
+          "content-type": "application/json",
+        },
+      })
+      .catch(() => null);
+    if (!updateResponse?.ok() && viewerPage) {
+      updateResponse = await this.requestViewerJsonFromPage({
+        viewerPage,
+        url: optionsUrl,
+        method: "PUT",
+        headers: {
+          ...requestHeaders,
+          "content-type": "application/json",
+        },
+        data: nextOptions,
+      });
+    }
     if (!updateResponse?.ok()) {
       if (!viewerPage) {
         onLog("Update filter viewer gagal, melanjutkan tanpa perubahan filter.");
@@ -2184,17 +2198,25 @@ class TurnitinAutomation {
     viewerPage = null,
     timeoutMs = 8000,
   } = {}) {
-    if (!context?.request || !optionsUrl) {
+    if ((!context?.request && !viewerPage) || !optionsUrl) {
       return null;
     }
 
     const deadline = Date.now() + Math.max(2000, Number(timeoutMs) || 8000);
     while (Date.now() < deadline) {
-      const response = await context.request
-        .get(optionsUrl, {
+      let response = await context?.request
+        ?.get(optionsUrl, {
           headers,
         })
         .catch(() => null);
+      if (!response?.ok() && viewerPage) {
+        response = await this.requestViewerJsonFromPage({
+          viewerPage,
+          url: optionsUrl,
+          method: "GET",
+          headers,
+        });
+      }
       if (response?.ok()) {
         return response;
       }
@@ -2218,7 +2240,7 @@ class TurnitinAutomation {
     onLog = noop,
   } = {}) {
     const similarityEndpoint = this.buildViewerSimilarityOptionsUrl({ viewerPage, reportUrl });
-    if (!similarityEndpoint || !context?.request) {
+    if (!similarityEndpoint || (!context?.request && !viewerPage)) {
       return null;
     }
 
@@ -2708,6 +2730,87 @@ class TurnitinAutomation {
       "x-sproutcore-version": "1.11.0",
       "x-palladium": "1",
     };
+  }
+
+  filterBrowserFetchHeaders(headers = {}) {
+    return Object.fromEntries(
+      Object.entries(headers || {}).filter(
+        ([name, value]) =>
+          value !== undefined &&
+          value !== null &&
+          value !== "" &&
+          !/^(user-agent|referer|cookie|origin|host|content-length|connection|sec-)/i.test(
+            String(name || "")
+          )
+      )
+    );
+  }
+
+  createSyntheticRequestResponse({ status = 0, headers = {}, bodyText = "" } = {}) {
+    return {
+      ok: () => status >= 200 && status < 300,
+      status: () => status,
+      headers: () => headers,
+      text: async () => bodyText,
+      json: async () => {
+        if (!bodyText) {
+          return {};
+        }
+        return JSON.parse(bodyText);
+      },
+    };
+  }
+
+  async requestViewerJsonFromPage({
+    viewerPage = null,
+    url = "",
+    method = "GET",
+    headers = {},
+    data = undefined,
+  } = {}) {
+    if (!viewerPage || !url || typeof viewerPage.evaluate !== "function") {
+      return null;
+    }
+
+    const payload = await viewerPage
+      .evaluate(
+        async ({ requestUrl, requestMethod, requestHeaders, requestData }) => {
+          try {
+            const response = await fetch(requestUrl, {
+              method: requestMethod,
+              credentials: "include",
+              headers: requestHeaders,
+              ...(requestData !== undefined ? { body: JSON.stringify(requestData) } : {}),
+            });
+            const text = await response.text();
+            return {
+              ok: response.ok,
+              status: response.status,
+              headers: Object.fromEntries(response.headers.entries()),
+              text,
+            };
+          } catch (error) {
+            return null;
+          }
+        },
+        {
+          requestUrl: url,
+          requestMethod: method,
+          requestHeaders: this.filterBrowserFetchHeaders(headers),
+          requestData: data,
+        }
+      )
+      .catch(() => null);
+
+    if (!payload) {
+      return null;
+    }
+
+    return this.createSyntheticRequestResponse({
+      status: payload.status,
+      headers: payload.headers || {},
+      bodyText: payload.text || "",
+    });
   }
 
   normalizeQueuedPollUrl(queuePollUrl, { viewerOrigin, language = "en_us" } = {}) {

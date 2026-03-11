@@ -123,7 +123,7 @@ function looksLikeTurnitinReportText(text) {
     return false;
   }
 
-  const markers = [
+  const classicMarkers = [
     /originality report/i,
     /similarity index/i,
     /primary sources/i,
@@ -131,8 +131,20 @@ function looksLikeTurnitinReportText(text) {
     /exclude quotes/i,
     /exclude bibliography/i,
   ];
-  const markerHits = markers.filter((pattern) => pattern.test(normalized)).length;
-  return markerHits >= 2;
+  const classicMarkerHits = classicMarkers.filter((pattern) => pattern.test(normalized)).length;
+  if (classicMarkerHits >= 2) {
+    return true;
+  }
+
+  const coverPageMarkers = [
+    /submission date:/i,
+    /submission id:/i,
+    /file name:/i,
+    /word count:/i,
+    /character count:/i,
+  ];
+  const coverPageHits = coverPageMarkers.filter((pattern) => pattern.test(normalized)).length;
+  return /submission id:/i.test(normalized) && coverPageHits >= 4;
 }
 
 function extractTurnitinReportSimilarityFromText(text) {

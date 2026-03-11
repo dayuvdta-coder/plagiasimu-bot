@@ -1092,6 +1092,79 @@ test("applyViewerReportOptions captures filtered similarity from viewer options 
   assert.equal(putHeaders?.["content-type"], "application/json");
 });
 
+test("applyViewerReportOptions falls back to browser-context fetch when APIRequestContext fails", async () => {
+  const automation = createAutomation();
+  let getCallCount = 0;
+  let putCallCount = 0;
+
+  const result = await automation.applyViewerReportOptions({
+    viewerPage: {
+      url: () => "https://ev.turnitin.com/app/carta/en_us/?o=123&lang=en_us",
+      waitForTimeout: async () => {},
+      evaluate: async (_pageFunction, args) => {
+        if (args.requestMethod === "GET") {
+          getCallCount += 1;
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+            },
+            text: JSON.stringify({
+              OriginalityOptions: [
+                {
+                  exclude_quotes: getCallCount > 1 ? 1 : 0,
+                  exclude_biblio: getCallCount > 1 ? 1 : 0,
+                  exclude_small_matches: 0,
+                },
+              ],
+              ...(getCallCount > 1
+                ? {
+                    report: {
+                      overlap: 15,
+                    },
+                  }
+                : {}),
+            }),
+          };
+        }
+
+        putCallCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+          },
+          text: JSON.stringify({
+            report: {
+              overlap: 15,
+            },
+          }),
+        };
+      },
+    },
+    context: {
+      request: {
+        get: async () => null,
+        put: async () => null,
+      },
+    },
+    reportOptions: {
+      excludeQuotes: true,
+      excludeBibliography: true,
+      excludeMatches: false,
+    },
+    reportUrl: "https://ev.turnitin.com/app/carta/en_us/?o=123&lang=en_us",
+    onLog() {},
+  });
+
+  assert.equal(putCallCount, 1);
+  assert.equal(getCallCount >= 2, true);
+  assert.equal(result.viewerSimilarity, "15%");
+  assert.equal(result.viewerFiltersConfirmed, true);
+});
+
 test("applyViewerReportOptions retries similarity options endpoint before falling back", async () => {
   const automation = createAutomation();
   let getCallCount = 0;

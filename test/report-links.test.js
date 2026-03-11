@@ -143,6 +143,21 @@ test("looksLikeTurnitinReportText recognizes Turnitin markers", () => {
   );
 });
 
+test("looksLikeTurnitinReportText recognizes metadata-only viewer cover pages", () => {
+  assert.equal(
+    looksLikeTurnitinReportText(`
+      Filter Compare All On
+      by Andi Nugroho
+      Submission date: 09-Mar-2026 10:30PM (UTC+0900)
+      Submission ID: 2898579776
+      File name: c0afb17b6e2787be36863703d864a24c (2.29M)
+      Word count: 23367
+      Character count: 153253
+    `),
+    true
+  );
+});
+
 test("extractTurnitinReportSimilarityFromText reads similarity from current view text", () => {
   assert.equal(
     extractTurnitinReportSimilarityFromText(`
