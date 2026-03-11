@@ -173,6 +173,26 @@ test("extractTurnitinReportSimilarityFromText reads similarity from current view
   );
 });
 
+test("extractTurnitinReportSimilarityFromText prefers report similarity over source percentages", () => {
+  assert.equal(
+    extractTurnitinReportSimilarityFromText(`
+      NASKAH_PUBLIKASI_ILMIAH
+      ORIGINALITY REPORT
+      100
+      100%
+      %
+      SIMILARITY INDEX
+      INTERNET SOURCES
+      32%
+      42%
+      PUBLICATIONS
+      STUDENT PAPERS
+      PRIMARY SOURCES
+    `),
+    "100%"
+  );
+});
+
 test("extractTurnitinReportFilterStatesFromText reads current view filter states", () => {
   assert.deepEqual(
     extractTurnitinReportFilterStatesFromText(`
@@ -428,8 +448,8 @@ test("sanitizeResultArtifacts keeps provided current view similarity for filtere
   );
 
   assert.equal(sanitized.dashboardSimilarity, "80%");
-  assert.equal(sanitized.currentViewSimilarity, "75%");
-  assert.equal(sanitized.similarity, "75%");
+  assert.equal(sanitized.currentViewSimilarity, null);
+  assert.equal(sanitized.similarity, null);
 
   await fs.rm(storageDir, { recursive: true, force: true });
 });

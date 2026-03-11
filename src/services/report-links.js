@@ -153,10 +153,38 @@ function extractTurnitinReportSimilarityFromText(text) {
     return null;
   }
 
+  const reportIndex = normalized.search(/\boriginality report\b/i);
+  let reportScope = normalized;
+  if (reportIndex >= 0) {
+    reportScope = normalized.slice(reportIndex);
+    const reportEnd = reportScope.search(
+      /\b(internet sources|publications|student papers|primary sources|exclude quotes|exclude bibliography)\b/i
+    );
+    if (reportEnd > 0) {
+      reportScope = reportScope.slice(0, reportEnd);
+    }
+  }
+
+  const similarityIndexMatch = reportScope.match(/\bsimilarity index\b/i);
+  if (similarityIndexMatch) {
+    const similarityIndex = similarityIndexMatch.index || 0;
+    const before = reportScope.slice(Math.max(0, similarityIndex - 120), similarityIndex);
+    const beforePercentages = [...before.matchAll(/\b(100|[1-9]?\d)\s*%/g)];
+    if (beforePercentages.length) {
+      return `${beforePercentages[beforePercentages.length - 1][1]}%`;
+    }
+
+    const after = reportScope.slice(similarityIndex, similarityIndex + 24);
+    const afterPercentages = [...after.matchAll(/\b(100|[1-9]?\d)\s*%/g)];
+    if (afterPercentages.length) {
+      return `${afterPercentages[0][1]}%`;
+    }
+  }
+
   const patterns = [
     /\boriginality report\b[^0-9]{0,40}(100|[1-9]?\d)\s*%\s*similarity index\b/i,
     /\b(100|[1-9]?\d)\s*%\s*similarity index\b/i,
-    /\bsimilarity index\b[^0-9]{0,20}(100|[1-9]?\d)\s*%/i,
+    /\bsimilarity index\b[^0-9]{0,12}(100|[1-9]?\d)\s*%/i,
   ];
 
   for (const pattern of patterns) {
@@ -457,6 +485,16 @@ async function sanitizeResultArtifacts(result, { storageDir } = {}) {
 
   if (!artifacts.viewerPdf && isLocalStoragePdfUrl(studioUrl)) {
     artifacts.viewerPdf = studioUrl;
+  }
+
+  if (
+    requestedReportOptions &&
+    (requestedReportOptions.excludeQuotes ||
+      requestedReportOptions.excludeBibliography ||
+      requestedReportOptions.excludeMatches) &&
+    !artifacts.viewerPdf
+  ) {
+    currentViewSimilarity = null;
   }
 
   if (!dashboardSimilarity) {
