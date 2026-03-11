@@ -184,6 +184,9 @@ module.exports = {
     pollingTimeoutSeconds: numberFromEnv("TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
     retryDelayMs: numberFromEnv("TELEGRAM_RETRY_DELAY_MS", 5000),
     sendRetryAttempts: numberFromEnv("TELEGRAM_SEND_RETRY_ATTEMPTS", 3),
+    downloadMaxFileBytes:
+      numberFromEnv("TELEGRAM_DOWNLOAD_MAX_FILE_MB", 20) * 1024 * 1024,
+    sendMaxFileBytes: numberFromEnv("TELEGRAM_SEND_MAX_FILE_MB", 50) * 1024 * 1024,
     statusPollIntervalMs: numberFromEnv("TELEGRAM_STATUS_POLL_INTERVAL_MS", 15000),
     titlePromptTimeoutMs: numberFromEnv("TELEGRAM_TITLE_PROMPT_TIMEOUT_MS", 60 * 1000),
     progressUpdateThrottleMs: numberFromEnv(

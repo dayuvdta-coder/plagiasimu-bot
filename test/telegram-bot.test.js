@@ -191,6 +191,131 @@ test("TelegramBotService downloads a Telegram document and enqueues a job", asyn
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test("TelegramBotService rejects oversized incoming Telegram documents with a clear limit message", async () => {
+  const { dir, config } = await createConfig();
+  const requests = [];
+  const service = new TelegramBotService({
+    config: {
+      ...config,
+      telegram: {
+        ...config.telegram,
+        downloadMaxFileBytes: 20 * 1024 * 1024,
+      },
+    },
+    jobRunner: {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      on() {},
+      off() {},
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 11,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleDocumentMessage({
+    chat: { id: 1001 },
+    document: {
+      file_id: "big-file-1",
+      file_name: "big.pdf",
+      file_size: 25 * 1024 * 1024,
+    },
+  });
+
+  assert.equal(requests.some((entry) => entry.url.endsWith("/getFile")), false);
+  assert.match(requests[0]?.payload?.text || "", /File terlalu besar untuk diproses lewat bot Telegram/);
+  assert.match(requests[0]?.payload?.text || "", /20 MB/);
+  assert.match(requests[0]?.payload?.text || "", /panel web/);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService surfaces a friendly message when Telegram rejects oversized getFile downloads", async () => {
+  const { dir, config } = await createConfig();
+  const requests = [];
+  const service = new TelegramBotService({
+    config,
+    jobRunner: {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+      on() {},
+      off() {},
+    },
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      requests.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/getFile")) {
+        return jsonResponse({
+          ok: false,
+          description: "Bad Request: file is too big",
+        }, 400);
+      }
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 12,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+
+  await service.handleUpdate({
+    message: {
+      chat: { id: 1001 },
+      document: {
+        file_id: "big-file-2",
+        file_name: "big-remote.pdf",
+        file_size: 0,
+      },
+    },
+  });
+
+  const outboundMessage = requests.find((entry) => entry.url.endsWith("/sendMessage"));
+  assert.ok(outboundMessage);
+  assert.match(outboundMessage.payload?.text || "", /File terlalu besar untuk diproses lewat bot Telegram/);
+  assert.doesNotMatch(outboundMessage.payload?.text || "", /Permintaan gagal diproses/);
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
 test("TelegramBotService /start shows welcome text with chat details", async () => {
   const { dir, config } = await createConfig();
   const requests = [];
@@ -2737,6 +2862,103 @@ test("TelegramBotService retries current view upload when Telegram sendDocument 
     loggerErrors.some((message) => message.includes("Telegram sendDocument gagal sementara")),
     true
   );
+
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+test("TelegramBotService reports a friendly message when current view exceeds Telegram send limit", async () => {
+  const { dir, config } = await createConfig();
+  const reportDir = path.join(dir, "reports", "job-too-big");
+  await fs.mkdir(reportDir, { recursive: true });
+  await fs.writeFile(path.join(reportDir, "similarity-report.pdf"), "pdf-too-big");
+
+  const fetchCalls = [];
+  const service = new TelegramBotService({
+    config: {
+      ...config,
+      telegram: {
+        ...config.telegram,
+        sendMaxFileBytes: 3,
+      },
+      storage: {
+        ...config.storage,
+        dir,
+      },
+    },
+    jobRunner: Object.assign(new EventEmitter(), {
+      jobStore: {
+        get() {
+          return null;
+        },
+      },
+    }),
+    fetchImpl: async (url, options = {}) => {
+      const payload = options.body ? JSON.parse(options.body) : null;
+      fetchCalls.push({
+        url,
+        payload,
+      });
+
+      if (url.endsWith("/editMessageText")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 55,
+          },
+        });
+      }
+
+      if (url.endsWith("/sendMessage")) {
+        return jsonResponse({
+          ok: true,
+          result: {
+            message_id: 201,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+    logger: {
+      log() {},
+      error() {},
+    },
+  });
+  service.sanitizeJobForDelivery = async (job) => job;
+
+  service.jobContexts.set("job-too-big", {
+    chatId: 1001,
+    statusMessageId: 55,
+    lastStatusText: null,
+    lastVisibleLogMessage: null,
+    lastProgressUpdateAt: 0,
+  });
+
+  await service.handleJobCompleted({
+    id: "job-too-big",
+    originalName: "hasil.pdf",
+    title: "hasil",
+    createdAt: new Date(Date.now() - 60 * 1000).toISOString(),
+    result: {
+      similarity: "44%",
+      finishedAt: new Date().toISOString(),
+      artifacts: {
+        viewerPdf: "/storage/reports/job-too-big/similarity-report.pdf",
+      },
+    },
+  });
+
+  assert.equal(
+    fetchCalls.filter((entry) => entry.url.endsWith("/sendDocument")).length,
+    0
+  );
+  const warningMessage = fetchCalls.find((entry) => entry.url.endsWith("/sendMessage"));
+  assert.ok(warningMessage);
+  assert.match(
+    warningMessage.payload?.text || "",
+    /terlalu besar untuk dikirim balik lewat Telegram/
+  );
+  assert.match(warningMessage.payload?.text || "", /panel web\/server/);
 
   await fs.rm(dir, { recursive: true, force: true });
 });

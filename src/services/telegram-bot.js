@@ -71,6 +71,8 @@ const ADMIN_COMMANDS = new Set([
   "/paymentacc",
 ]);
 const PAYMENT_TERMINAL_STATUSES = new Set(["completed", "cancelled", "expired", "failed"]);
+const TELEGRAM_DEFAULT_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
+const TELEGRAM_DEFAULT_SEND_LIMIT_BYTES = 50 * 1024 * 1024;
 
 function resolveStorageUrlPath(storageDir, value) {
   const text = String(value || "").trim();
@@ -134,6 +136,12 @@ function isInlineReplyMarkup(replyMarkup) {
 function createAbortError() {
   const error = new Error("The operation was aborted.");
   error.name = "AbortError";
+  return error;
+}
+
+function createUserFacingError(message) {
+  const error = new Error(String(message || "").trim() || "Permintaan tidak bisa diproses.");
+  error.userFacing = true;
   return error;
 }
 
@@ -214,6 +222,20 @@ function formatDurationRough(ms) {
   return `sekitar ${hours} jam ${minutes} menit`;
 }
 
+function formatFileSizeMb(bytes) {
+  const numeric = Number(bytes);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return "0 MB";
+  }
+
+  const megabytes = numeric / (1024 * 1024);
+  if (megabytes >= 10) {
+    return `${Math.round(megabytes)} MB`;
+  }
+
+  return `${megabytes.toFixed(1).replace(/\.0$/, "")} MB`;
+}
+
 function normalizeReportOptionsForDisplay(reportOptions = {}, defaultExcludeMatchesWordCount = 10) {
   const safeReportOptions =
     reportOptions && typeof reportOptions === "object" ? reportOptions : {};
@@ -288,6 +310,10 @@ function isRetryableTelegramTransportError(error) {
   );
 }
 
+function isTelegramFileTooBigError(error) {
+  return /file is too big/i.test(String(error?.message || ""));
+}
+
 class TelegramBotService {
   constructor({
     config,
@@ -341,6 +367,44 @@ class TelegramBotService {
 
   get fileBaseUrl() {
     return `https://api.telegram.org/file/bot${this.telegramConfig.botToken}`;
+  }
+
+  getTelegramDownloadLimitBytes() {
+    return Math.max(
+      1,
+      Number(this.telegramConfig.downloadMaxFileBytes) || TELEGRAM_DEFAULT_DOWNLOAD_LIMIT_BYTES
+    );
+  }
+
+  getTelegramSendLimitBytes() {
+    return Math.max(
+      1,
+      Number(this.telegramConfig.sendMaxFileBytes) || TELEGRAM_DEFAULT_SEND_LIMIT_BYTES
+    );
+  }
+
+  getEffectiveIncomingFileLimitBytes() {
+    return Math.min(
+      Math.max(1, Number(this.config.maxFileBytes) || this.getTelegramDownloadLimitBytes()),
+      this.getTelegramDownloadLimitBytes()
+    );
+  }
+
+  buildIncomingFileTooLargeText(document = {}) {
+    const limitBytes = this.getEffectiveIncomingFileLimitBytes();
+    const fileSize = Number(document?.file_size || 0);
+    const sizePart = fileSize > 0 ? ` File ini sekitar ${formatFileSizeMb(fileSize)}.` : "";
+    return [
+      `File terlalu besar untuk diproses lewat bot Telegram. Batas aman lewat bot sekitar ${formatFileSizeMb(limitBytes)}.${sizePart}`,
+      "Kecilkan atau kompres file, lalu kirim ulang. Jika perlu file besar, upload lewat panel web.",
+    ].join(" ");
+  }
+
+  buildOutgoingFileTooLargeText({ fileName = null, fileSize = null, limitBytes = null } = {}) {
+    const limitLabel = formatFileSizeMb(limitBytes || this.getTelegramSendLimitBytes());
+    const sizeLabel = fileSize ? ` (${formatFileSizeMb(fileSize)})` : "";
+    const label = truncate(normalizeDisplayFilename(fileName || "file"), 80);
+    return `${label} terlalu besar untuk dikirim balik lewat Telegram${sizeLabel}. Batas kirim bot sekitar ${limitLabel}. Hasil tetap bisa dicek dari panel web/server.`;
   }
 
   isEnabled() {
@@ -692,9 +756,12 @@ class TelegramBotService {
       );
     } catch (error) {
       this.logger.error(`Telegram update handling error: ${error.message}`);
+      const messageText = error?.userFacing
+        ? String(error.message || "Permintaan tidak bisa diproses.")
+        : `Permintaan gagal diproses: ${truncate(error.message, 160)}`;
       await this.sendMessage(
         chatId,
-        `Permintaan gagal diproses: ${truncate(error.message, 160)}`
+        messageText
       ).catch(() => null);
     }
   }
@@ -1752,6 +1819,14 @@ class TelegramBotService {
 
     const captionTitle = this.extractCaptionTitle(message);
     const captionFilter = this.extractCaptionFilter(message);
+    const incomingFileSize = Number(document.file_size || 0);
+    if (
+      incomingFileSize > 0 &&
+      incomingFileSize > this.getEffectiveIncomingFileLimitBytes()
+    ) {
+      await this.sendMessage(chatId, this.buildIncomingFileTooLargeText(document));
+      return;
+    }
 
     const pendingDraft = this.pendingSubmissions.get(chatKey) || null;
     if (pendingDraft) {
@@ -1785,10 +1860,7 @@ class TelegramBotService {
       return;
     }
 
-    if (
-      Number(document.file_size || 0) > 0 &&
-      Number(document.file_size || 0) > this.config.maxFileBytes
-    ) {
+    if (incomingFileSize > 0 && incomingFileSize > this.config.maxFileBytes) {
       await this.sendMessage(
         chatId,
         `Ukuran file melebihi batas ${Math.round(this.config.maxFileBytes / (1024 * 1024))} MB.`
@@ -3528,6 +3600,11 @@ class TelegramBotService {
   async downloadTelegramDocument(document) {
     const file = await this.apiRequest("getFile", {
       file_id: document.file_id,
+    }).catch((error) => {
+      if (isTelegramFileTooBigError(error)) {
+        throw createUserFacingError(this.buildIncomingFileTooLargeText(document));
+      }
+      throw error;
     });
     if (!file?.file_path) {
       throw new Error("Telegram tidak mengembalikan file_path.");
@@ -3540,7 +3617,12 @@ class TelegramBotService {
     const ext = path.extname(preferredName);
     const storageName = `${randomUUID()}${ext}`;
     const targetPath = path.join(this.config.storage.uploadsDir, storageName);
-    const buffer = await this.bufferRequest(`${this.fileBaseUrl}/${file.file_path}`);
+    const buffer = await this.bufferRequest(`${this.fileBaseUrl}/${file.file_path}`).catch((error) => {
+      if (isTelegramFileTooBigError(error)) {
+        throw createUserFacingError(this.buildIncomingFileTooLargeText(document));
+      }
+      throw error;
+    });
     await fs.writeFile(targetPath, buffer);
     return {
       filePath: targetPath,
@@ -3678,6 +3760,19 @@ class TelegramBotService {
     filePath,
     { caption = "", filename = null, contentType = "application/octet-stream", replyMarkup = null } = {}
   ) {
+    const resolvedFilename = filename || path.basename(filePath);
+    const fileStat = await fs.stat(filePath).catch(() => null);
+    const maxSendBytes = this.getTelegramSendLimitBytes();
+    if (fileStat?.size > maxSendBytes) {
+      throw createUserFacingError(
+        this.buildOutgoingFileTooLargeText({
+          fileName: resolvedFilename,
+          fileSize: fileStat.size,
+          limitBytes: maxSendBytes,
+        })
+      );
+    }
+
     const buffer = await fs.readFile(filePath);
     const maxAttempts = Math.max(1, Number(this.telegramConfig.sendRetryAttempts) || 3);
     const retryDelayMs = Math.max(0, Number(this.telegramConfig.retryDelayMs) || 5000);
@@ -3692,7 +3787,7 @@ class TelegramBotService {
             reply_markup: isInlineReplyMarkup(replyMarkup) ? JSON.stringify(replyMarkup) : null,
           },
           fieldName,
-          filename: filename || path.basename(filePath),
+          filename: resolvedFilename,
           contentType,
           fileBuffer: buffer,
         });
@@ -3708,6 +3803,15 @@ class TelegramBotService {
         });
         return data.result;
       } catch (error) {
+        if (isTelegramFileTooBigError(error)) {
+          throw createUserFacingError(
+            this.buildOutgoingFileTooLargeText({
+              fileName: resolvedFilename,
+              fileSize: fileStat?.size || null,
+              limitBytes: maxSendBytes,
+            })
+          );
+        }
         lastError = error;
         if (!isRetryableTelegramTransportError(error) || attempt >= maxAttempts) {
           throw error;
